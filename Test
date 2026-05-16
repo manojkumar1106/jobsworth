@@ -1,0 +1,556 @@
+package com.hlt.api.dtos.response;
+
+import lombok.AllArgsConstructor;
+import lombok.Data;
+import lombok.NoArgsConstructor;
+
+@Data
+@AllArgsConstructor
+@NoArgsConstructor
+public class LoginResponse {
+    private String sessionKey;
+    private String accessToken;
+    private String idToken;
+    private String refreshToken;
+    private String tokenType;
+    private Integer expiresIn;
+    private String message;
+}
+
+-----
+
+package com.hlt.api.dtos.request;
+
+import lombok.Data;
+
+@Data
+public class RegisterRequest {
+    private String adminSessionKey;
+    private String email;
+    private String phone;
+    private String firstName;
+    private String lastName;
+}
+
+
+
+
+
+
+
+------
+package com.hlt.api.dtos.response;
+
+import lombok.AllArgsConstructor;
+import lombok.Data;
+import lombok.NoArgsConstructor;
+
+@Data
+@AllArgsConstructor
+@NoArgsConstructor
+public class RegisterResponse {
+    private String username;
+    private String userStatus;
+    private String message;
+}
+-----
+package com.hlt.api.service;
+
+import com.hlt.api.dtos.request.TicketRequest;
+import com.hlt.api.dtos.response.LoginResponse;
+
+public interface IAuthService {
+    // already exists
+    void startSession(TicketRequest req);
+
+    // NEW — handles Cognito callback after login
+    LoginResponse handleCallback(String code);
+}
+
+
+
+
+
+
+-------------
+
+package com.hlt.api.service;
+
+import com.hlt.api.dtos.request.RegisterRequest;
+import com.hlt.api.dtos.request.TicketRequest;
+import com.hlt.api.dtos.response.RegisterResponse;
+
+public interface IAdminService {
+    // already exists
+    void upsertUser(TicketRequest req);
+
+    // NEW
+    RegisterResponse createClientUser(RegisterRequest request);
+}
+
+
+
+--------
+package com.hlt.api.service.serviceimpl;
+
+import com.hlt.api.dao.AuthDao;
+import com.hlt.api.dtos.request.TicketRequest;
+import com.hlt.api.dtos.response.LoginResponse;
+import com.hlt.api.service.IAuthService;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.*;
+import org.springframework.stereotype.Service;
+import org.springframework.util.LinkedMultiValueMap;
+import org.springframework.util.MultiValueMap;
+import org.springframework.web.client.RestTemplate;
+
+import java.util.Map;
+import java.util.UUID;
+
+@Slf4j
+@Service
+public class AuthService implements IAuthService {
+
+    @Value("${cognito.admin-client-id}")
+    private String clientId;
+
+    @Value("${cognito.admin-client-Secret}")
+    private String clientSecret;
+
+    @Value("${cognito.hosted-ui-url}")
+    private String hostedUiUrl;
+
+    @Value("${cognito.redirect-uri}")
+    private String redirectUri;
+
+    private final AuthDao authDao;
+    private final RestTemplate restTemplate;
+
+    public AuthService(AuthDao authDao) {
+        this.authDao = authDao;
+        this.restTemplate = new RestTemplate();
+    }
+
+    // ─────────────────────────────────────────────
+    // ALREADY EXISTS — keep exactly as is
+    // ─────────────────────────────────────────────
+    @Override
+    public void startSession(TicketRequest req) {
+        log.info("Starting {} session for identity: {}",
+                req.getType(), req.getCognitoUserId());
+
+        switch (req.getType().toUpperCase()) {
+            case "CLIENT":
+                authDao.startClientAdminSession(
+                        req.getCognitoUserId(),
+                        req.getSessionKey());
+                break;
+            case "CUSTOMER":
+                authDao.startClientCustomerSession(
+                        req.getCognitoUserId(),
+                        req.getSessionKey());
+                break;
+            case "GUEST":
+                authDao.startGuestSession(
+                        req.getSessionKey(),
+                        req.getQueryString());
+                break;
+            // add GLOBAL case if needed
+        }
+    }
+
+    // ─────────────────────────────────────────────
+    // NEW — called by /api/auth/callback
+    // After user logs in via Cognito Hosted UI
+    // Cognito redirects to /api/auth/callback?code=xxx
+    // ─────────────────────────────────────────────
+    @Override
+    public LoginResponse handleCallback(String code) {
+
+        // 1. Exchange authorization code for JWT tokens
+        Map<String, Object> tokenResponse =
+                exchangeCodeForTokens(code);
+
+        String accessToken  = (String) tokenResponse.get("access_token");
+        String idToken      = (String) tokenResponse.get("id_token");
+        String refreshToken = (String) tokenResponse.get("refresh_token");
+        String tokenType    = (String) tokenResponse.get("token_type");
+        Integer expiresIn   = (Integer) tokenResponse.get("expires_in");
+
+        // 2. Get user email from Cognito userInfo
+        String email = getUserEmailFromToken(accessToken);
+
+        // 3. Generate session key
+        String sessionKey = UUID.randomUUID().toString();
+
+        // 4. Start session using existing startSession method
+        // exactly same pattern as rest of your code
+        TicketRequest sessionReq = new TicketRequest();
+        sessionReq.setType("CLIENT");
+        sessionReq.setCognitoUserId(email);
+        sessionReq.setSessionKey(sessionKey);
+        startSession(sessionReq);
+        // → calls authDao.startClientAdminSession()
+        // → calls usp_Start_Client_Admin_Session
+        // → stores sessionKey in User_Session table
+
+        log.info("Login successful, session started for: {}", email);
+
+        // 5. Return JWT + session key to frontend
+        return new LoginResponse(
+                sessionKey,
+                accessToken,
+                idToken,
+                refreshToken,
+                tokenType,
+                expiresIn,
+                "Login successful."
+        );
+    }
+
+    // ─────────────────────────────────────────────
+    // Exchange code for tokens
+    // Calls Cognito /oauth2/token endpoint
+    // ─────────────────────────────────────────────
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> exchangeCodeForTokens(String code) {
+        String tokenUrl = hostedUiUrl + "/oauth2/token";
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
+
+        MultiValueMap<String, String> body =
+                new LinkedMultiValueMap<>();
+        body.add("grant_type",    "authorization_code");
+        body.add("client_id",     clientId);
+        body.add("client_secret", clientSecret);
+        body.add("code",          code);
+        body.add("redirect_uri",  redirectUri);
+
+        HttpEntity<MultiValueMap<String, String>> request =
+                new HttpEntity<>(body, headers);
+
+        ResponseEntity<Map> response = restTemplate.postForEntity(
+                tokenUrl, request, Map.class);
+
+        if (response.getStatusCode() != HttpStatus.OK
+                || response.getBody() == null) {
+            throw new RuntimeException(
+                "Failed to exchange code for tokens");
+        }
+
+        return response.getBody();
+    }
+
+    // ─────────────────────────────────────────────
+    // Get user email from Cognito userInfo endpoint
+    // ─────────────────────────────────────────────
+    @SuppressWarnings("unchecked")
+    private String getUserEmailFromToken(String accessToken) {
+        String userInfoUrl = hostedUiUrl + "/oauth2/userInfo";
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(accessToken);
+
+        HttpEntity<Void> request = new HttpEntity<>(headers);
+
+        ResponseEntity<Map> response = restTemplate.exchange(
+                userInfoUrl,
+                HttpMethod.GET,
+                request,
+                Map.class);
+
+        if (response.getStatusCode() != HttpStatus.OK
+                || response.getBody() == null) {
+            throw new RuntimeException(
+                "Failed to get user info from Cognito");
+        }
+
+        String email = (String) response.getBody().get("email");
+        if (email == null || email.isEmpty()) {
+            throw new RuntimeException(
+                "Email not found in Cognito user info");
+        }
+
+        return email.trim().toLowerCase();
+    }
+}
+
+
+
+-----------
+package com.hlt.api.service.serviceimpl;
+
+import com.hlt.api.dao.AdminDao;
+import com.hlt.api.dtos.request.RegisterRequest;
+import com.hlt.api.dtos.request.TicketRequest;
+import com.hlt.api.dtos.response.RegisterResponse;
+import com.hlt.api.service.IAdminService;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.annotation.Lazy;
+import org.springframework.stereotype.Service;
+
+import java.util.HashMap;
+import java.util.Map;
+
+@Slf4j
+@Service
+public class AdminService implements IAdminService {
+
+    private final AdminDao adminDao;
+    private final CognitoAdminService cognitoAdminService;
+
+    public AdminService(
+            AdminDao adminDao,
+            @Lazy CognitoAdminService cognitoAdminService) {
+        this.adminDao = adminDao;
+        this.cognitoAdminService = cognitoAdminService;
+    }
+
+    // ─────────────────────────────────────────────
+    // NEW — delegates to CognitoAdminService
+    // ─────────────────────────────────────────────
+    @Override
+    public RegisterResponse createClientUser(
+            RegisterRequest request) {
+        return cognitoAdminService.createClientUser(request);
+    }
+
+    // ─────────────────────────────────────────────
+    // ALREADY EXISTS — keep exactly as is
+    // ─────────────────────────────────────────────
+    @Override
+    public void upsertUser(TicketRequest req) {
+        log.info("Upserting {} User: {}",
+                req.getType(), req.getEmail());
+
+        Map<String, Object> params = new HashMap<>();
+        params.put("p_Session_Key",     req.getSessionKey());
+        params.put("p_Cognito_User_Id", req.getCognitoUserId());
+
+        if (!"GLOBAL".equalsIgnoreCase(
+                req.getType().toUpperCase())) {
+            params.put("p_Email_Address", req.getEmail());
+            params.put("p_Phone_Number",  req.getPhone());
+        }
+
+        params.put("p_First_Name", req.getFirstName());
+        params.put("p_Last_Name",  req.getLastName());
+
+        if ("ADMIN".equalsIgnoreCase(req.getType())) {
+            params.put("p_Cognito_User_Pool_Id",
+                    req.getUserPoolId());
+            adminDao.upsertClientAdmin(params);
+        } else if ("CUSTOMER".equalsIgnoreCase(req.getType())) {
+            params.put("p_Cognito_User_Pool_Id",
+                    req.getUserPoolId());
+            params.put("p_Email_Address", req.getEmail());
+            adminDao.upsertClientCustomer(params);
+        }
+    }
+}
+----------
+
+
+
+package com.hlt.api.service.serviceimpl;
+
+import com.hlt.api.dtos.request.RegisterRequest;
+import com.hlt.api.dtos.request.TicketRequest;
+import com.hlt.api.dtos.response.RegisterResponse;
+import com.hlt.api.repository.ClientUserRepository;
+import com.hlt.api.service.IAdminService;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.annotation.Lazy;
+import org.springframework.stereotype.Service;
+import software.amazon.awssdk.services.cognitoidentityprovider.CognitoIdentityProviderClient;
+import software.amazon.awssdk.services.cognitoidentityprovider.model.*;
+
+import java.util.ArrayList;
+import java.util.List;
+
+@Slf4j
+@Service
+public class CognitoAdminService {
+
+    @Value("${cognito.admin-user-pool-id}")
+    private String adminUserPoolId;
+
+    @Value("${cognito.hosted-ui-url}")
+    private String hostedUiUrl;
+
+    @Value("${cognito.admin-client-id}")
+    private String adminClientId;
+
+    private final CognitoIdentityProviderClient cognitoClient;
+    private final OtpAuthService otpAuthService;
+    private final ClientUserRepository clientUserRepository;
+    private final IAdminService adminService;
+
+    public CognitoAdminService(
+            @Qualifier("adminCognitoClient")
+            CognitoIdentityProviderClient cognitoClient,
+            OtpAuthService otpAuthService,
+            ClientUserRepository clientUserRepository,
+            @Lazy IAdminService adminService) {
+        this.cognitoClient = cognitoClient;
+        this.otpAuthService = otpAuthService;
+        this.clientUserRepository = clientUserRepository;
+        this.adminService = adminService;
+    }
+
+    // ─────────────────────────────────────────────
+    // CREATE CLIENT USER
+    // adminSessionKey = Create_Session_Key in DB
+    // NO session started here
+    // User gets session on login via /api/auth/callback
+    // ─────────────────────────────────────────────
+    public RegisterResponse createClientUser(
+            RegisterRequest request) {
+
+        String adminSessionKey = request.getAdminSessionKey();
+        String email     = request.getEmail().trim().toLowerCase();
+        String phone     = request.getPhone().trim();
+        String firstName = request.getFirstName().trim();
+        String lastName  = request.getLastName().trim();
+
+        // 1. Validate
+        validateProfileData(email, phone, firstName, lastName);
+
+        // 2. Check duplicate
+        if (clientUserRepository.existsByEmailAddress(email)) {
+            throw new IllegalArgumentException(
+                "A user with this email already exists.");
+        }
+
+        // 3. Build Cognito attributes
+        List<AttributeType> userAttributes = new ArrayList<>();
+        userAttributes.add(AttributeType.builder()
+                .name("email").value(email).build());
+        userAttributes.add(AttributeType.builder()
+                .name("email_verified").value("true").build());
+        if (!firstName.isEmpty()) {
+            userAttributes.add(AttributeType.builder()
+                    .name("given_name").value(firstName).build());
+        }
+        if (!lastName.isEmpty()) {
+            userAttributes.add(AttributeType.builder()
+                    .name("family_name").value(lastName).build());
+        }
+        if (!phone.isEmpty()) {
+            userAttributes.add(AttributeType.builder()
+                    .name("phone_number").value(phone).build());
+        }
+
+        // 4. Generate temp password
+        String temporaryPassword = otpAuthService.generateOtp();
+
+        // 5. Create in Cognito
+        AdminCreateUserRequest cognitoRequest =
+                AdminCreateUserRequest.builder()
+                        .userPoolId(adminUserPoolId)
+                        .username(email)
+                        .temporaryPassword(temporaryPassword)
+                        .userAttributes(userAttributes)
+                        .messageAction(MessageActionType.SUPPRESS)
+                        .build();
+
+        AdminCreateUserResponse cognitoResponse =
+                cognitoClient.adminCreateUser(cognitoRequest);
+
+        // 6. Upsert in DB using existing upsertUser
+        // adminSessionKey stored as Create_Session_Key
+        TicketRequest upsertReq = new TicketRequest();
+        upsertReq.setType("ADMIN");
+        upsertReq.setSessionKey(adminSessionKey);
+        upsertReq.setCognitoUserId(email);
+        upsertReq.setUserPoolId(adminUserPoolId);
+        upsertReq.setEmail(email);
+        upsertReq.setPhone(phone);
+        upsertReq.setFirstName(firstName);
+        upsertReq.setLastName(lastName);
+        adminService.upsertUser(upsertReq);
+
+        // 7. Send welcome email with temp password + login link
+        otpAuthService.sendEmail(email, null, temporaryPassword);
+
+        log.info("Client user created by admin: {} for: {}",
+                adminSessionKey, email);
+
+        return new RegisterResponse(
+                cognitoResponse.user().username(),
+                cognitoResponse.user().userStatusAsString(),
+                "User created. Temporary password sent to email."
+        );
+    }
+
+    // ─────────────────────────────────────────────
+    // VALIDATE
+    // ─────────────────────────────────────────────
+    private static void validateProfileData(
+            String email, String phone,
+            String firstName, String lastName) {
+
+        if (email == null || email.isEmpty())
+            throw new IllegalArgumentException(
+                "Email is required.");
+        if (!email.matches("^[A-Za-z0-9+_.-]+@(.+)$"))
+            throw new IllegalArgumentException(
+                "Invalid email format.");
+        if (phone == null || phone.isEmpty())
+            throw new IllegalArgumentException(
+                "Phone is required.");
+        if (!phone.replaceAll("[^0-9]", "")
+                .matches("^\\+?[1-9]\\d{7,14}$"))
+            throw new IllegalArgumentException(
+                "Invalid phone format.");
+        if (firstName == null || firstName.isEmpty())
+            throw new IllegalArgumentException(
+                "First name is required.");
+        if (!firstName.matches("^[a-zA-Z\\s'\\-]{1,100}$"))
+            throw new IllegalArgumentException(
+                "Invalid first name.");
+        if (lastName == null || lastName.isEmpty())
+            throw new IllegalArgumentException(
+                "Last name is required.");
+        if (!lastName.matches("^[a-zA-Z\\s'\\-]{1,100}$"))
+            throw new IllegalArgumentException(
+                "Invalid last name.");
+    }
+}
+
+
+
+---------
+
+
+// ADD this endpoint to your existing PublicAuthController.java
+
+// GET /api/auth/callback?code=xxx
+// Cognito Hosted UI redirects here after user logs in
+@GetMapping("/callback")
+public ResponseEntity<LoginResponse> callback(
+        @RequestParam String code) {
+    log.info("Received Cognito callback");
+    LoginResponse response = authService.handleCallback(code);
+    return ResponseEntity.ok(response);
+}
+
+
+_________
+
+
+// ADD this endpoint to your existing AdminController.java
+
+// POST /api/admin/create-user
+// Body: { adminSessionKey, email, phone, firstName, lastName }
+@PostMapping("/create-user")
+public ResponseEntity<RegisterResponse> createUser(
+        @RequestBody RegisterRequest request) {
+    return ResponseEntity.ok(
+            adminService.createClientUser(request));
+}
+
