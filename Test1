@@ -8,47 +8,29 @@ public class RedisConfig {
     private String redisUsername;
 
     @Bean
-    public LettuceConnectionFactory redisConnectionFactory() 
-            throws Exception {
-
+    public LettuceConnectionFactory redisConnectionFactory() {
+        
         RedisStandaloneConfiguration config = 
             new RedisStandaloneConfiguration();
         config.setHostName(redisHost);
         config.setPort(6379);
         config.setUsername(redisUsername);
-        config.setPassword(RedisPassword.of(generateIamToken()));
 
+        // Let AWS IAM handle auth via instance metadata
         LettuceClientConfiguration clientConfig = 
             LettuceClientConfiguration.builder()
                 .useSsl()
+                .clientOptions(
+                    ClientOptions.builder()
+                        .sslOptions(
+                            SslOptions.builder()
+                                .jdkSslProvider()
+                                .build()
+                        )
+                        .build()
+                )
                 .build();
 
         return new LettuceConnectionFactory(config, clientConfig);
-    }
-
-    private String generateIamToken() throws Exception {
-        // Use AWS SDK v1 — already included via spring-cloud-aws
-        // OR use IMDSv2 + SigV4 manually
-        
-        com.amazonaws.auth.DefaultAWSCredentialsProviderChain creds =
-            new com.amazonaws.auth.DefaultAWSCredentialsProviderChain();
-            
-        com.amazonaws.auth.AWSCredentials awsCreds = 
-            creds.getCredentials();
-
-        // Build pre-signed URL for ElastiCache IAM auth
-        String region = "us-east-1";
-        String clusterId = "snd-ticketing-valkey-x4ubek";
-        String action = "connect";
-
-        com.amazonaws.auth.AWS4Signer signer = 
-            new com.amazonaws.auth.AWS4Signer();
-        signer.setServiceName("elasticache");
-        signer.setRegionName(region);
-
-        // Build the token URL
-        String token = buildPresignedToken(
-            awsCreds, region, clusterId, redisUsername);
-        return token;
     }
 }
