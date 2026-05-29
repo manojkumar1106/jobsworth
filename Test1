@@ -1,9 +1,19 @@
-LettuceClientConfiguration clientConfig =
-        LettuceClientConfiguration.builder()
-                .useSsl()
-                .build();
+// Step 4 - SSL config
+        LettuceClientConfiguration clientConfig =
+                LettuceClientConfiguration.builder()
+                        .useSsl()
+                        .disablePeerVerification()
+                        .build();
 
-LettuceConnectionFactory factory =
-        new LettuceConnectionFactory(
-                new RedisStandaloneConfiguration(redisHost, redisPort),
-                clientConfig);
+        // Step 5 - Standalone config (host/port only)
+        RedisStandaloneConfiguration standaloneConfig =
+                new RedisStandaloneConfiguration(redisHost, redisPort);
+
+        // Step 6 - Factory with credentials provider factory
+        LettuceConnectionFactory factory =
+                new LettuceConnectionFactory(standaloneConfig, clientConfig);
+
+        // Step 7 - Wire IAM credentials provider for auto-refresh
+        factory.setRedisCredentialsProviderFactory(
+                connection -> credentialsProvider
+        );
