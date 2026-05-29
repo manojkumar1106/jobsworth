@@ -1,19 +1,3 @@
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
-import org.springframework.data.redis.connection.RedisConnectionFactory;
-import org.springframework.data.redis.connection.RedisStandaloneConfiguration;
-import org.springframework.data.redis.connection.lettuce.LettuceClientConfiguration;
-import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
-import org.springframework.data.redis.core.RedisTemplate;
-import org.springframework.data.redis.serializer.StringRedisSerializer;
-import software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider;
-import software.amazon.awssdk.regions.Region;
-import software.amazon.awssdk.services.elasticache.auth.ElastiCacheAuthTokenGenerator;
-import software.amazon.awssdk.services.elasticache.auth.ElastiCacheAuthTokenRequest;
-import io.lettuce.core.SslOptions;
-import io.lettuce.core.ClientOptions;
-
 @Configuration
 public class RedisConfig {
 
@@ -27,45 +11,43 @@ public class RedisConfig {
     private String userId;
 
     @Value("${redis.serverless-cache-name}")
-    private String serverlessCacheName;  // renamed from replicationGroupId
+    private String serverlessCacheName;
 
     @Value("${redis.region}")
     private String region;
 
-    private String generateIAMToken() {
-        ElastiCacheAuthTokenRequest tokenRequest =
-            ElastiCacheAuthTokenRequest.builder()
-                .cacheName(serverlessCacheName)  // ← use cacheName, not replicationGroupId
-                .userName(userId)
-                .isServerless(true)              // ← KEY FLAG
-                .build();
-
-        ElastiCacheAuthTokenGenerator tokenGenerator =
-            ElastiCacheAuthTokenGenerator.builder()
-                .credentialsProvider(DefaultCredentialsProvider.create())
-                .region(Region.of(region))
-                .build();
-
-        return tokenGenerator.generateAuthToken(tokenRequest);
-    }
-
     @Bean
     public RedisConnectionFactory redisConnectionFactory() {
-        // Use IAM token as password
-        RedisStandaloneConfiguration config =
-            new RedisStandaloneConfiguration();
-        config.setHostName(redisHost);
-        config.setPort(redisPort);
-        config.setUsername(userId);
-        config.setPassword(generateIAMToken());  // IAM token here
+        // Use YOUR existing custom classes
+        AwsCredentialsProvider awsCredentialsProvider =
+            DefaultCredentialsProvider.create();
 
-        // SSL required for ElastiCache Serverless
-        LettuceClientConfiguration clientConfig =
-            LettuceClientConfiguration.builder()
-                .useSsl()
-                .build();
+        IAMAuthTokenRequest tokenRequest = new IAMAuthTokenRequest(
+            userId,
+            serverlessCacheName,  // serverless cache name
+            region
+        );
 
-        return new LettuceConnectionFactory(config, clientConfig);
+        RedisIAMAuthCredentialsProvider credentialsProvider =
+            new RedisIAMAuthCredentialsProvider(
+                userId,
+                tokenRequest,
+                awsCredentialsProvider
+            );
+
+        RedisURI redisURI = RedisURI.builder()
+            .withHost(redisHost)
+            .withPort(redisPort)
+            .withSsl(true)
+            .withAuthentication(credentialsProvider)
+            .build();
+
+        LettuceConnectionFactory factory =
+            new LettuceConnectionFactory(
+                new RedisStandaloneConfiguration(redisHost, redisPort));
+
+        factory.afterPropertiesSet();
+        return factory;
     }
 
     @Bean
