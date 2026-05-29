@@ -1,19 +1,81 @@
-// Step 4 - SSL config
+@Configuration
+public class RedisConfig {
+
+    @Value("${spring.data.redis.host}")
+    private String redisHost;
+
+    @Value("${spring.data.redis.port}")
+    private int redisPort;
+
+    @Value("${redis.user-id}")
+    private String userId;
+
+    @Value("${redis.serverless-cache-name}")
+    private String serverlessCacheName;
+
+    @Value("${redis.region}")
+    private String region;
+
+    private RedisIAMAuthCredentialsProvider credentialsProvider;
+    private LettuceConnectionFactory factory;
+
+    @Bean
+    public RedisConnectionFactory redisConnectionFactory() {
+
+        AwsCredentialsProvider awsCredentialsProvider =
+                DefaultCredentialsProvider.create();
+
+        IAMAuthTokenRequest tokenRequest = new IAMAuthTokenRequest(
+                userId,
+                serverlessCacheName,
+                region
+        );
+
+        // credentialsProvider already caches token for 600 seconds
+        credentialsProvider = new RedisIAMAuthCredentialsProvider(
+                userId,
+                tokenRequest,
+                awsCredentialsProvider
+        );
+
+        RedisStandaloneConfiguration standaloneConfig =
+                new RedisStandaloneConfiguration(redisHost, redisPort);
+        standaloneConfig.setUsername(userId);
+        standaloneConfig.setPassword(
+                credentialsProvider.resolveCredentials()
+                        .block().getPassword().toString()
+        );
+
         LettuceClientConfiguration clientConfig =
                 LettuceClientConfiguration.builder()
                         .useSsl()
                         .disablePeerVerification()
                         .build();
 
-        // Step 5 - Standalone config (host/port only)
-        RedisStandaloneConfiguration standaloneConfig =
-                new RedisStandaloneConfiguration(redisHost, redisPort);
+        factory = new LettuceConnectionFactory(standaloneConfig, clientConfig);
+        factory.afterPropertiesSet();
+        return factory;
+    }
 
-        // Step 6 - Factory with credentials provider factory
-        LettuceConnectionFactory factory =
-                new LettuceConnectionFactory(standaloneConfig, clientConfig);
+    // Refresh token every 10 minutes before 15 min expiry
+    @Scheduled(fixedDelay = 600000)
+    public void refreshRedisToken() {
+        if (factory != null && credentialsProvider != null) {
+            String newToken = credentialsProvider.resolveCredentials()
+                    .block().getPassword().toString();
+            ((RedisStandaloneConfiguration) factory
+                    .getStandaloneConfiguration())
+                    .setPassword(newToken);
+        }
+    }
 
-        // Step 7 - Wire IAM credentials provider for auto-refresh
-        factory.setRedisCredentialsProviderFactory(
-                connection -> credentialsProvider
-        );
+    @Bean
+    public RedisTemplate<String, String> redisTemplate(
+            RedisConnectionFactory factory) {
+        RedisTemplate<String, String> template = new RedisTemplate<>();
+        template.setConnectionFactory(factory);
+        template.setKeySerializer(new StringRedisSerializer());
+        template.setValueSerializer(new StringRedisSerializer());
+        return template;
+    }
+}
