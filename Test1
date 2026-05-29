@@ -1,35 +1,41 @@
 @Configuration
 public class RedisConfig {
 
-    @Value("${spring.data.redis.host}")
+    @Value("${aws.elasticache.host}")
     private String redisHost;
 
-    @Value("${spring.data.redis.username}")
-    private String redisUsername;
+    public String generateIamAuthToken() {
+        // Use serverless-cache-name instead of replication-group-id
+        String cacheName = "snd-ticketing-valkey-x4ubek"; // your serverless cache name
+        String region = "us-east-1";
+        
+        ElastiCacheAuthTokenRequest request = ElastiCacheAuthTokenRequest.builder()
+            .cacheName(cacheName)          // replaces replicationGroupId
+            .userName("hl-snd-ticketing-v1-AnywhereRole")
+            .isServerless(true)            // ← KEY FLAG for serverless
+            .build();
+
+        ElastiCacheAuthTokenGenerator tokenGenerator = 
+            ElastiCacheAuthTokenGenerator.builder()
+                .region(Region.of(region))
+                .build();
+
+        return tokenGenerator.generateAuthToken(request);
+    }
 
     @Bean
-    public LettuceConnectionFactory redisConnectionFactory() {
+    public RedisConnectionFactory redisConnectionFactory() {
+        String token = generateIamAuthToken();
         
-        RedisStandaloneConfiguration config = 
-            new RedisStandaloneConfiguration();
+        RedisStandaloneConfiguration config = new RedisStandaloneConfiguration();
         config.setHostName(redisHost);
         config.setPort(6379);
-        config.setUsername(redisUsername);
+        config.setUsername("hl-snd-ticketing-v1-AnywhereRole");
+        config.setPassword(token);  // IAM token as password
 
-        // Let AWS IAM handle auth via instance metadata
-        LettuceClientConfiguration clientConfig = 
-            LettuceClientConfiguration.builder()
-                .useSsl()
-                .clientOptions(
-                    ClientOptions.builder()
-                        .sslOptions(
-                            SslOptions.builder()
-                                .jdkSslProvider()
-                                .build()
-                        )
-                        .build()
-                )
-                .build();
+        LettuceClientConfiguration clientConfig = LettuceClientConfiguration.builder()
+            .useSsl()
+            .build();
 
         return new LettuceConnectionFactory(config, clientConfig);
     }
