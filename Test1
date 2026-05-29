@@ -1,42 +1,80 @@
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.data.redis.connection.RedisConnectionFactory;
+import org.springframework.data.redis.connection.RedisStandaloneConfiguration;
+import org.springframework.data.redis.connection.lettuce.LettuceClientConfiguration;
+import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
+import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.serializer.StringRedisSerializer;
+import software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider;
+import software.amazon.awssdk.regions.Region;
+import software.amazon.awssdk.services.elasticache.auth.ElastiCacheAuthTokenGenerator;
+import software.amazon.awssdk.services.elasticache.auth.ElastiCacheAuthTokenRequest;
+import io.lettuce.core.SslOptions;
+import io.lettuce.core.ClientOptions;
+
 @Configuration
 public class RedisConfig {
 
-    @Value("${aws.elasticache.host}")
+    @Value("${spring.data.redis.host}")
     private String redisHost;
 
-    public String generateIamAuthToken() {
-        // Use serverless-cache-name instead of replication-group-id
-        String cacheName = "snd-ticketing-valkey-x4ubek"; // your serverless cache name
-        String region = "us-east-1";
-        
-        ElastiCacheAuthTokenRequest request = ElastiCacheAuthTokenRequest.builder()
-            .cacheName(cacheName)          // replaces replicationGroupId
-            .userName("hl-snd-ticketing-v1-AnywhereRole")
-            .isServerless(true)            // ← KEY FLAG for serverless
-            .build();
+    @Value("${spring.data.redis.port}")
+    private int redisPort;
 
-        ElastiCacheAuthTokenGenerator tokenGenerator = 
+    @Value("${redis.user-id}")
+    private String userId;
+
+    @Value("${redis.serverless-cache-name}")
+    private String serverlessCacheName;  // renamed from replicationGroupId
+
+    @Value("${redis.region}")
+    private String region;
+
+    private String generateIAMToken() {
+        ElastiCacheAuthTokenRequest tokenRequest =
+            ElastiCacheAuthTokenRequest.builder()
+                .cacheName(serverlessCacheName)  // ← use cacheName, not replicationGroupId
+                .userName(userId)
+                .isServerless(true)              // ← KEY FLAG
+                .build();
+
+        ElastiCacheAuthTokenGenerator tokenGenerator =
             ElastiCacheAuthTokenGenerator.builder()
+                .credentialsProvider(DefaultCredentialsProvider.create())
                 .region(Region.of(region))
                 .build();
 
-        return tokenGenerator.generateAuthToken(request);
+        return tokenGenerator.generateAuthToken(tokenRequest);
     }
 
     @Bean
     public RedisConnectionFactory redisConnectionFactory() {
-        String token = generateIamAuthToken();
-        
-        RedisStandaloneConfiguration config = new RedisStandaloneConfiguration();
+        // Use IAM token as password
+        RedisStandaloneConfiguration config =
+            new RedisStandaloneConfiguration();
         config.setHostName(redisHost);
-        config.setPort(6379);
-        config.setUsername("hl-snd-ticketing-v1-AnywhereRole");
-        config.setPassword(token);  // IAM token as password
+        config.setPort(redisPort);
+        config.setUsername(userId);
+        config.setPassword(generateIAMToken());  // IAM token here
 
-        LettuceClientConfiguration clientConfig = LettuceClientConfiguration.builder()
-            .useSsl()
-            .build();
+        // SSL required for ElastiCache Serverless
+        LettuceClientConfiguration clientConfig =
+            LettuceClientConfiguration.builder()
+                .useSsl()
+                .build();
 
         return new LettuceConnectionFactory(config, clientConfig);
+    }
+
+    @Bean
+    public RedisTemplate<String, String> redisTemplate(
+            RedisConnectionFactory factory) {
+        RedisTemplate<String, String> template = new RedisTemplate<>();
+        template.setConnectionFactory(factory);
+        template.setKeySerializer(new StringRedisSerializer());
+        template.setValueSerializer(new StringRedisSerializer());
+        return template;
     }
 }
