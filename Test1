@@ -1,15 +1,19 @@
-private static String generateIamAuthToken(
-        String clusterName, String userId, Region region) throws Exception {
+You can do one thing 
+@Value("${redis.host}")
+private String host;
 
-    final var requestUri = URI.create(
-        String.format("http://%s/", clusterName)
-    );
+@Value("${redis.port}")
+private int port;
 
-    SdkHttpFullRequest request = SdkHttpFullRequest.builder()
-        .method(SdkHttpMethod.GET)
-        .uri(requestUri)
-        .appendRawQueryParameter("Action", "connect")
-        .appendRawQueryParameter("User", userId)
-        .build();
+@Value("${redis.user-id}")
+private String userId;
 
-    // Sign the request
+@PostConstruct
+public void printRedisConfig() {
+    System.out.println("================================");
+    System.out.println("REDIS HOST  : " + host);
+    System.out.println("REDIS PORT  : " + port);
+    System.out.println("REDIS USER  : " + userId);
+    System.out.println("ENV HOST    : " + System.getenv("VALKEY_HOST"));
+    System.out.println("================================");
+}
