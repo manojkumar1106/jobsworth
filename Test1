@@ -1,19 +1,7 @@
-You can do one thing 
-@Value("${redis.host}")
-private String host;
-
-@Value("${redis.port}")
-private int port;
-
-@Value("${redis.user-id}")
-private String userId;
-
-@PostConstruct
-public void printRedisConfig() {
-    System.out.println("================================");
-    System.out.println("REDIS HOST  : " + host);
-    System.out.println("REDIS PORT  : " + port);
-    System.out.println("REDIS USER  : " + userId);
-    System.out.println("ENV HOST    : " + System.getenv("VALKEY_HOST"));
-    System.out.println("================================");
+@Bean
+@Primary
+public LettuceConnectionFactory redisConnectionFactory() {
+    RedisStandaloneConfiguration config = 
+        new RedisStandaloneConfiguration(host, port);
+    return new LettuceConnectionFactory(config);
 }
