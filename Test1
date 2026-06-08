@@ -7,5 +7,11 @@ public static BeanDefinitionRegistryPostProcessor redisAutoConfigDisabler() {
         } catch (Exception e) {
             System.out.println("=== No auto Redis bean found ===");
         }
+        try {
+            registry.removeBeanDefinition("redisHealthContributor");
+            System.out.println("=== Removed Redis health contributor ===");
+        } catch (Exception e) {
+            System.out.println("=== No Redis health contributor found ===");
+        }
     };
 }
