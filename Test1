@@ -1,7 +1,11 @@
 @Bean
-@Primary
-public LettuceConnectionFactory redisConnectionFactory() {
-    RedisStandaloneConfiguration config = 
-        new RedisStandaloneConfiguration(host, port);
-    return new LettuceConnectionFactory(config);
+public static BeanDefinitionRegistryPostProcessor redisAutoConfigDisabler() {
+    return registry -> {
+        try {
+            registry.removeBeanDefinition("redisConnectionFactory");
+            System.out.println("=== Removed Spring auto Redis bean ===");
+        } catch (Exception e) {
+            System.out.println("=== No auto Redis bean found ===");
+        }
+    };
 }
