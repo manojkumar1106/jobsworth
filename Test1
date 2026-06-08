@@ -1,20 +1,16 @@
-@Bean
-public static BeanDefinitionRegistryPostProcessor redisAutoConfigDisabler() {
-    return registry -> {
-        String[] beansToRemove = {
-            "redisConnectionFactory",
-            "redisTemplate",
-            "stringRedisTemplate",
-            "redisHealthContributor",
-            "springDataWebConfiguration"
-        };
-        for (String beanName : beansToRemove) {
-            try {
-                registry.removeBeanDefinition(beanName);
-                System.out.println("=== Removed: " + beanName);
-            } catch (Exception e) {
-                System.out.println("=== Not found: " + beanName);
-            }
-        }
-    };
-}
+// Check if auto config is excluded
+    org.springframework.boot.autoconfigure.AutoConfigurations configs = 
+        org.springframework.boot.autoconfigure.AutoConfigurations.of(
+            RedisConfig.class
+        );
+    System.out.println("Redis Auto Config Active: " + 
+        org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory.class.getName()
+    );
+    spring:
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration
+      - org.springframework.boot.autoconfigure.data.redis.RedisReactiveAutoConfiguration
+      - org.springframework.boot.autoconfigure.data.redis.RedisRepositoriesAutoConfiguration
+      - org.springframework.boot.data.redis.autoconfigure.DataRedisAutoConfiguration
+      - org.springframework.boot.data.redis.autoconfigure.DataRedisReactiveAutoConfiguration
