@@ -1,17 +1,20 @@
 @Bean
 public static BeanDefinitionRegistryPostProcessor redisAutoConfigDisabler() {
     return registry -> {
-        try {
-            registry.removeBeanDefinition("redisConnectionFactory");
-            System.out.println("=== Removed Spring auto Redis bean ===");
-        } catch (Exception e) {
-            System.out.println("=== No auto Redis bean found ===");
-        }
-        try {
-            registry.removeBeanDefinition("redisHealthContributor");
-            System.out.println("=== Removed Redis health contributor ===");
-        } catch (Exception e) {
-            System.out.println("=== No Redis health contributor found ===");
+        String[] beansToRemove = {
+            "redisConnectionFactory",
+            "redisTemplate",
+            "stringRedisTemplate",
+            "redisHealthContributor",
+            "springDataWebConfiguration"
+        };
+        for (String beanName : beansToRemove) {
+            try {
+                registry.removeBeanDefinition(beanName);
+                System.out.println("=== Removed: " + beanName);
+            } catch (Exception e) {
+                System.out.println("=== Not found: " + beanName);
+            }
         }
     };
 }
