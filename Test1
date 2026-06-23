@@ -1,16 +1,38 @@
-// Check if auto config is excluded
-    org.springframework.boot.autoconfigure.AutoConfigurations configs = 
-        org.springframework.boot.autoconfigure.AutoConfigurations.of(
-            RedisConfig.class
-        );
-    System.out.println("Redis Auto Config Active: " + 
-        org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory.class.getName()
-    );
-    spring:
-  autoconfigure:
-    exclude:
-      - org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration
-      - org.springframework.boot.autoconfigure.data.redis.RedisReactiveAutoConfiguration
-      - org.springframework.boot.autoconfigure.data.redis.RedisRepositoriesAutoConfiguration
-      - org.springframework.boot.data.redis.autoconfigure.DataRedisAutoConfiguration
-      - org.springframework.boot.data.redis.autoconfigure.DataRedisReactiveAutoConfiguration
+AdminCreateUserRequest request = AdminCreateUserRequest.builder()
+        .userPoolId(userPoolId)
+        .username(email)
+        .userAttributes(
+                AttributeType.builder()
+                        .name("email")
+                        .value(email)
+                        .build(),
+                AttributeType.builder()
+                        .name("email_verified")
+                        .value("true")
+                        .build())
+        .messageAction(MessageActionType.RESEND)
+        .build();
+
+cognitoIdentityProviderClient.adminCreateUser(request);
+
+
+
+
+
+
+
+AdminRespondToAuthChallengeRequest challengeRequest =
+        AdminRespondToAuthChallengeRequest.builder
+()
+                .userPoolId(userPoolId)
+                .clientId(clientId)
+                .challengeName(ChallengeNameType.CUSTOM_CHALLENGE)
+                .challengeResponses(Map.of(
+                        "USERNAME", email,
+                        "ANSWER", otp))
+                .session(session)
+                .build();
+
+AdminRespondToAuthChallengeResponse response =
+        cognitoClient.adminRespondToAuthChallenge(challengeRequest);
+
