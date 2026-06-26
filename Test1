@@ -141,3 +141,69 @@ export const amenityTypeDefs = `
 
 
 
+export const amenityTypeDefs = `
+
+  input GetAmenityType {
+    type: String!
+  }
+
+  input GetLocationAmenity {
+    type: String!
+    locationFunctionId: Int!
+  }
+
+  input GetAmenityDetail {
+    type: String!
+    amenityId: Int!
+  }
+
+  input GetAmenitySchedule {
+    type: String!
+    amenityId: Int!
+  }
+
+  input InsertAmenity {
+    type: String!
+    amenityTypeId: Int!
+    locationFunctionId: Int!
+  }
+
+  input UpsertAmenitySchedule {
+    type: String!
+    amenityId: Int!
+    scheduleJson: String!
+    datesJson: String!
+  }
+
+  input UpdateAmenity {
+    type: String!
+    amenityId: Int!
+    amenityName: String!
+    amenityDescription: String!
+    isScheduled: Int
+  }
+
+  input RemoveAmenity {
+    type: String!
+    amenityId: Int!
+  }
+
+  type Mutation {
+    getAmenityType(request: GetAmenityType): SessionResponse
+    getLocationAmenity(request: GetLocationAmenity): SessionResponse
+    getAmenityDetail(request: GetAmenityDetail): SessionResponse
+    getAmenitySchedule(request: GetAmenitySchedule): SessionResponse
+    insertAmenity(request: InsertAmenity): SessionResponse
+    upsertAmenitySchedule(request: UpsertAmenitySchedule): SessionResponse
+    updateAmenity(request: UpdateAmenity): SessionResponse
+    removeAmenity(request: RemoveAmenity): SessionResponse
+  }
+`;
+
+
+
+
+
+
+
+
