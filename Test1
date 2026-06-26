@@ -1,38 +1,143 @@
-AdminCreateUserRequest request = AdminCreateUserRequest.builder()
-        .userPoolId(userPoolId)
-        .username(email)
-        .userAttributes(
-                AttributeType.builder()
-                        .name("email")
-                        .value(email)
-                        .build(),
-                AttributeType.builder()
-                        .name("email_verified")
-                        .value("true")
-                        .build())
-        .messageAction(MessageActionType.RESEND)
-        .build();
+import { httpClient } from "../utils/http/httpClient";
 
-cognitoIdentityProviderClient.adminCreateUser(request);
+async function postAmenityData(
+  method: string,
+  endpoint: string,
+  request: any,
+  token: string,
+  logger: any
+) {
+  const baseUrl = process.env.SPRINGBOOT_BASE_ENDPOINT;
+  const url = `${baseUrl}/api/v1/amenity${endpoint}`;
+  return await httpClient(
+    url,
+    {
+      method: method,
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${token}`,
+      },
+      body: method === "GET" ? undefined : request,
+    },
+    logger
+  );
+}
+
+export async function getAmenityType(request: any, token: string, logger: any) {
+  return await postAmenityData("GET", "/type", request, token, logger);
+}
+
+export async function getLocationAmenity(request: any, token: string, logger: any) {
+  return await postAmenityData("GET", "/location", request, token, logger);
+}
+
+export async function getAmenityDetail(request: any, token: string, logger: any) {
+  return await postAmenityData("GET", "/detail", request, token, logger);
+}
+
+export async function getAmenitySchedule(request: any, token: string, logger: any) {
+  return await postAmenityData("GET", "/schedule", request, token, logger);
+}
+
+export async function insertAmenity(request: any, token: string, logger: any) {
+  return await postAmenityData("POST", "/insert", request, token, logger);
+}
+
+export async function upsertAmenitySchedule(request: any, token: string, logger: any) {
+  return await postAmenityData("POST", "/schedule/upsert", request, token, logger);
+}
+
+export async function updateAmenity(request: any, token: string, logger: any) {
+  return await postAmenityData("POST", "/update", request, token, logger);
+}
+
+export async function removeAmenity(request: any, token: string, logger: any) {
+  return await postAmenityData("DELETE", "/remove", request, token, logger);
+}
 
 
 
 
 
+import {
+  getAmenityType,
+  getLocationAmenity,
+  getAmenityDetail,
+  getAmenitySchedule,
+  insertAmenity,
+  upsertAmenitySchedule,
+  updateAmenity,
+  removeAmenity,
+} from "../../service/amenityService";
+
+export const amenityResolvers = {
+  Mutation: {
+    getAmenityType: async (_: any, { request }: any, ctx: any) => {
+      ctx.logger.info("Get Amenity Types", { request });
+      return await getAmenityType(request, ctx.token, ctx.logger);
+    },
+    getLocationAmenity: async (_: any, { request }: any, ctx: any) => {
+      ctx.logger.info("Get Location Amenity", { request });
+      return await getLocationAmenity(request, ctx.token, ctx.logger);
+    },
+    getAmenityDetail: async (_: any, { request }: any, ctx: any) => {
+      ctx.logger.info("Get Amenity Detail", { request });
+      return await getAmenityDetail(request, ctx.token, ctx.logger);
+    },
+    getAmenitySchedule: async (_: any, { request }: any, ctx: any) => {
+      ctx.logger.info("Get Amenity Schedule", { request });
+      return await getAmenitySchedule(request, ctx.token, ctx.logger);
+    },
+    insertAmenity: async (_: any, { request }: any, ctx: any) => {
+      ctx.logger.info("Insert Amenity", { request });
+      return await insertAmenity(request, ctx.token, ctx.logger);
+    },
+    upsertAmenitySchedule: async (_: any, { request }: any, ctx: any) => {
+      ctx.logger.info("Upsert Amenity Schedule", { request });
+      return await upsertAmenitySchedule(request, ctx.token, ctx.logger);
+    },
+    updateAmenity: async (_: any, { request }: any, ctx: any) => {
+      ctx.logger.info("Update Amenity", { request });
+      return await updateAmenity(request, ctx.token, ctx.logger);
+    },
+    removeAmenity: async (_: any, { request }: any, ctx: any) => {
+      ctx.logger.info("Remove Amenity", { request });
+      return await removeAmenity(request, ctx.token, ctx.logger);
+    },
+  },
+};
 
 
-AdminRespondToAuthChallengeRequest challengeRequest =
-        AdminRespondToAuthChallengeRequest.builder
-()
-                .userPoolId(userPoolId)
-                .clientId(clientId)
-                .challengeName(ChallengeNameType.CUSTOM_CHALLENGE)
-                .challengeResponses(Map.of(
-                        "USERNAME", email,
-                        "ANSWER", otp))
-                .session(session)
-                .build();
 
-AdminRespondToAuthChallengeResponse response =
-        cognitoClient.adminRespondToAuthChallenge(challengeRequest);
+
+
+export const amenityTypeDefs = `
+  input AmenityRequest {
+    type: String!
+    amenityId: Int
+    amenityTypeId: Int
+    locationFunctionId: Int
+    amenityName: String
+    amenityDescription: String
+    isScheduled: Int
+    scheduleJson: String
+    datesJson: String
+  }
+
+  type Mutation {
+    getAmenityType(request: AmenityRequest): SessionResponse
+    getLocationAmenity(request: AmenityRequest): SessionResponse
+    getAmenityDetail(request: AmenityRequest): SessionResponse
+    getAmenitySchedule(request: AmenityRequest): SessionResponse
+    insertAmenity(request: AmenityRequest): SessionResponse
+    upsertAmenitySchedule(request: AmenityRequest): SessionResponse
+    updateAmenity(request: AmenityRequest): SessionResponse
+    removeAmenity(request: AmenityRequest): SessionResponse
+  }
+
+
+`;
+
+
+
 
