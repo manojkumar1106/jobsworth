@@ -1,11 +1,6 @@
-drl.append("\n            )\n");   // <-- this closes Cart(...)
+INSERT INTO ENGINE_CONFIG (CONFIG_KEY, CONFIG_VALUE, DESCRIPTION, CREATED_AT, UPDATED_AT, UPDATED_BY)
+VALUES ('MAX_PROMOS_PER_CART', '3', 'Maximum number of stackable promotions allowed per cart', NOW(), NOW(), 'ADMIN');
 
-// ADD THIS BLOCK HERE:
-if (sd.getMinQuantity() != null && sd.getMinQuantity() > 0) {
-    drl.append("        $totalQty : Number(intValue >= ")
-       .append(sd.getMinQuantity())
-       .append(") from accumulate(CartItem($qty : quantity) from $cart.items, sum($qty))\n");
-}
 
-drl.append("    then\n");   // <-- this was already there
+
 
