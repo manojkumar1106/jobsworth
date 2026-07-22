@@ -83,3 +83,10 @@ public SystemDiscount create(SystemDiscount discount, String createdBy) {
     return saved;
 }
 
+
+@PostMapping("/system-discounts/{id}/reject")
+public ResponseEntity<SystemDiscount> reject(@PathVariable Long id,
+                                              @RequestParam String rejectedBy) {
+    return ResponseEntity.ok(systemDiscountService.reject(id, rejectedBy));
+}
+
