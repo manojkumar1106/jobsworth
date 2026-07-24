@@ -1,4 +1,66 @@
-UPDATE SYSTEM_DISCOUNT
-SET APPROVAL_STATUS = 'APPROVED'
-WHERE MANAGER_APPROVAL_REQUIRED = FALSE
-  AND APPROVAL_STATUS IS NULL;
+// For PROMO_CODE promotions: customer selection cap
+private String selectionGroup;
+private Integer maxSelectablePerGroup;
+
+// For AUTOMATIC promotions: system-side mutual exclusion (mirrors SystemDiscount)
+private String stackGroup;
+
+
+
+
+private String selectionGroup;
+private Integer maxSelectablePerGroup;
+private String stackGroup;
+
+
+
+
+p.setSelectionGroup(req.getSelectionGroup());
+p.setMaxSelectablePerGroup(req.getMaxSelectablePerGroup());
+p.setStackGroup(req.getStackGroup());
+
+
+
+
+
+// CHECK 4.5: Selection group cap (applies to PROMO_CODE promotions only)
+Map<String, List<Promotion>> byGroup = selectedPromos.stream()
+        .filter(p -> p.getSelectionGroup() != null)
+        .collect(Collectors.groupingBy(Promotion::getSelectionGroup));
+
+byGroup.forEach((group, promosInGroup) -> {
+    int maxSelectable = promosInGroup.get(0).getMaxSelectablePerGroup() != null
+            ? promosInGroup.get(0).getMaxSelectablePerGroup()
+            : Integer.MAX_VALUE;
+
+    if (promosInGroup.size() > maxSelectable) {
+        throw new RuntimeException("You can select maximum " + maxSelectable
+                + " promotions from group [" + group + "]. You selected: " + promosInGroup.size());
+    }
+});
+
+
+
+
+
+drl.append("        $result : DiscountResult(\n");
+drl.append("            promoStackLocked == false,\n");
+drl.append("            isRuleAlreadyFired(\"").append(ruleName).append("\") == false");
+
+// NEW: only AUTOMATIC promotions get stackGroup exclusion
+if (p.getRedemptionMethod() == RedemptionMethod.AUTOMATIC
+        && p.getStackGroup() != null && !p.getStackGroup().isEmpty()) {
+    drl.append(",\n            isStackGroupAlreadyFired(\"").append(p.getStackGroup()).append("\") == false");
+}
+
+drl.append("\n        )\n");
+
+
+
+
+if (p.getRedemptionMethod() == RedemptionMethod.AUTOMATIC
+        && p.getStackGroup() != null && !p.getStackGroup().isEmpty()) {
+    drl.append("        $result.markStackGroupFired(\"").append(p.getStackGroup()).append("\");\n");
+}
+
+
