@@ -1,338 +1,467 @@
-import {
-  AdminInitiateAuthCommand,
-  AdminRespondToAuthChallengeCommand,
-  AdminGetUserCommand,
-  CognitoIdentityProviderClient,
-  InitiateAuthCommand,
-} from "@aws-sdk/client-cognito-identity-provider";
-import { createHmac } from "crypto";
-import { redisClient } from "../../redisClient";
-import { jwtDecode } from "jwt-decode";
-import { startSession, endSession } from "./loginSession";
-import { upsertUser, getCustomerProfile } from "../admin/adminService";
+package com.hlt.api.service.serviceimpl;
 
-/*
- * ===============================================================
- * STEP 1: INITIATE OTP (Cognito CUSTOM_AUTH)
- * ===============================================================
- */
-export async function initiateOtpAuth(
-  userName: string,
-  logger: any,
-  tenantId: string,
-) {
-  const clientId = process.env.AWS_CUST_CLIENT_ID;
-  const region = process.env.AWS_REGION;
-  const userPoolId = process.env.AWS_CUST_USERPOOL_ID;
-  const secretHash = getSecretHash(userName);
-  const client = new CognitoIdentityProviderClient({ region });
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.hlt.api.dao.AdminDao;
+import com.hlt.api.dao.AuthDao;
+import com.hlt.api.dtos.request.SendEmailOtp;
+import com.hlt.api.dtos.request.TicketRequest;
+import com.hlt.api.dtos.request.VerifyEmailOtp;
+import com.hlt.api.dtos.response.CustomerProfileResponseDTO;
+import com.hlt.api.exception.BadRequestException;
+import com.hlt.api.service.IAdminService;
+import jakarta.mail.MessagingException;
+import jakarta.mail.internet.MimeMessage;
+import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang3.StringUtils;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.mail.javamail.JavaMailSender;
+import org.springframework.mail.javamail.MimeMessageHelper;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import software.amazon.awssdk.services.cognitoidentityprovider.CognitoIdentityProviderClient;
+import software.amazon.awssdk.services.cognitoidentityprovider.model.*;
 
-  try {
-    logger.info("Initiating CUSTOM_AUTH flow with upfront password...");
-    console.log(
-      `Pool: ${userPoolId} - Client: ${clientId} - UserName: ${userName}`,
-    );
+import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
+import java.nio.charset.StandardCharsets;
+import java.security.SecureRandom;
+import java.util.*;
 
-    // >>> CONFIRM: AdminInitiateAuth with CUSTOM_AUTH requires the Cognito
-    // user to already exist. If it doesn't, this throws UserNotFoundException.
-    // Decide here whether to auto-create the user first (mirrors old Java
-    // autoRegisterCustomer) before calling adminInitiateAuth, e.g.:
-    //
-    //   try {
-    //     await client.send(new AdminGetUserCommand({ UserPoolId: userPoolId, Username: userName }));
-    //   } catch (err: any) {
-    //     if (err.name === "UserNotFoundException") {
-    //       // call adminCreateUser here with custom:ActiveTenantId = tenantId
-    //     } else {
-    //       throw err;
-    //     }
-    //   }
+@Slf4j
+@Service
+public class OtpAuthService {
 
-    const initCommand = new AdminInitiateAuthCommand({
-      UserPoolId: userPoolId,
-      ClientId: clientId,
-      AuthFlow: "CUSTOM_AUTH",
-      AuthParameters: {
-        USERNAME: userName,
-        SECRET_HASH: secretHash,
-      },
-      ClientMetadata: {
-        tenantId: tenantId,
-      },
-    });
+    private final JavaMailSender mailSender;
+    private final CognitoIdentityProviderClient cognitoClient;
+    private final IAdminService adminService;
+    private final AuthDao authDao;
+    private final AdminDao adminDao;
 
-    const response = await client.send(initCommand);
+    private final SecureRandom secureRandom = new SecureRandom();
 
-    if (response.ChallengeName) {
-      const challengeName = response.ChallengeName;
-      const challengeSession = response.Session;
-      const userId = response.ChallengeParameters?.USERNAME;
-      return { challengeName, userId, userName, challengeSession };
+    @Value("${cognito.user-pool-id}")
+    private String userPoolId;
+
+    @Value("${cognito.client-id}")
+    private String clientId;
+
+    @Value("${cognito.client-secret}")
+    private String clientSecret;
+
+    @Value("${cognito.hosted-ui-url}")
+    private String hostedUiUrl;
+
+    @Value("${cognito.admin-client-id}")
+    private String adminClientId;
+
+    @Value("${cognito.redirect-uri}")
+    private String redirectUri;
+
+    @Value("${spring.mail.fromEmail}")
+    private String fromMail;
+
+    public OtpAuthService(
+            JavaMailSender mailSender,
+            @Qualifier("customerCognitoClient") CognitoIdentityProviderClient cognitoClient,
+            IAdminService adminService,
+            AuthDao authDao,
+            AdminDao adminDao
+    ) {
+        this.mailSender = mailSender;
+        this.cognitoClient = cognitoClient;
+        this.adminService = adminService;
+        this.authDao = authDao;
+        this.adminDao = adminDao;
     }
 
-    throw new Error("AWS did not return a OTP Session.");
-  } catch (error: any) {
-    console.log(`Error: ${JSON.stringify(error)}`);
-    throw new Error(`AWS Error: ${error.message}`);
-  }
+    /*
+     * ===============================================================
+     * STEP 1: INITIATE OTP (Cognito CUSTOM_AUTH, tenantId mandatory)
+     * ===============================================================
+     */
+    public Map<String, Object> initiateOtpAuth(SendEmailOtp request, String tenantId) {
+
+        validateEmail(request.getEmail());
+        if (tenantId == null || tenantId.isBlank()) {
+            throw new BadRequestException("x-tenant-id header is required");
+        }
+        String email = request.getEmail().trim().toLowerCase();
+
+        ensureCognitoIdentityExistsAndTenantMatches(email, tenantId);
+
+        String secretHash = calculateSecretHash(email);
+        Map<String, String> authParams = new HashMap<>();
+        authParams.put("USERNAME", email);
+        authParams.put("SECRET_HASH", secretHash);
+
+        try {
+            log.info("Initiating CUSTOM_AUTH flow for {}", sanitizeForLog(email));
+
+            AdminInitiateAuthResponse response = cognitoClient.adminInitiateAuth(
+                    AdminInitiateAuthRequest.builder()
+                            .userPoolId(userPoolId)
+                            .clientId(clientId)
+                            .authFlow(AuthFlowType.CUSTOM_AUTH)
+                            .authParameters(authParams)
+                            .clientMetadata(Map.of("tenantId", tenantId))
+                            .build()
+            );
+
+            if (response.challengeName() != null) {
+                return Map.of(
+                        "challengeName", response.challengeNameAsString(),
+                        "session", response.session(),
+                        "userName", email
+                );
+            }
+
+            throw new BadRequestException("AWS did not return an OTP session");
+
+        } catch (BadRequestException ex) {
+            throw ex;
+        } catch (Exception ex) {
+            log.error("Failed to initiate OTP for {}", sanitizeForLog(email), ex);
+            throw new BadRequestException("Failed to initiate OTP: " + ex.getMessage());
+        }
+    }
+
+    /*
+     * ===============================================================
+     * STEP 2: VERIFY OTP + LOGIN + SESSION START
+     * ===============================================================
+     */
+    @Transactional
+    public Map<String, Object> verifyOtpAndLogin(VerifyEmailOtp request, String tenantId) {
+
+        validateVerifyRequest(request);
+        if (tenantId == null || tenantId.isBlank()) {
+            throw new BadRequestException("x-tenant-id header is required");
+        }
+
+        String email = request.getEmail().trim().toLowerCase();
+        String otp = request.getOtp().trim();
+        String session = request.getSession();
+        String secretHash = calculateSecretHash(email);
+
+        Map<String, String> challengeResponses = new HashMap<>();
+        challengeResponses.put("USERNAME", email);
+        challengeResponses.put("ANSWER", otp);
+        challengeResponses.put("SECRET_HASH", secretHash);
+
+        AdminRespondToAuthChallengeResponse response;
+        try {
+            response = cognitoClient.adminRespondToAuthChallenge(
+                    AdminRespondToAuthChallengeRequest.builder()
+                            .userPoolId(userPoolId)
+                            .clientId(clientId)
+                            .challengeName(ChallengeNameType.CUSTOM_CHALLENGE)
+                            .session(session)
+                            .challengeResponses(challengeResponses)
+                            .clientMetadata(Map.of("tenantId", tenantId))
+                            .build()
+            );
+        } catch (Exception ex) {
+            log.error("OTP verification failed for {}", sanitizeForLog(email), ex);
+            throw new IllegalArgumentException("Invalid or expired OTP");
+        }
+
+        if (response.authenticationResult() == null) {
+            throw new IllegalArgumentException("Invalid or expired OTP");
+        }
+
+        AuthenticationResultType authResult = response.authenticationResult();
+
+        cognitoClient.adminUpdateUserAttributes(
+                AdminUpdateUserAttributesRequest.builder()
+                        .userPoolId(userPoolId)
+                        .username(email)
+                        .userAttributes(
+                                AttributeType.builder().name("email_verified").value("true").build()
+                        )
+                        .build()
+        );
+
+        AdminGetUserResponse userResponse = cognitoClient.adminGetUser(
+                AdminGetUserRequest.builder().userPoolId(userPoolId).username(email).build()
+        );
+        String tenantAttr = getTenantAttribute(userResponse)
+                .orElseThrow(() -> new BadRequestException("Tenant attribute missing for customer"));
+
+        if (!tenantAttr.equalsIgnoreCase(tenantId)) {
+            throw new BadRequestException("Customer is not registered for tenant: " + tenantId);
+        }
+
+        String jwtSessionKey = extractStableSessionKey(authResult.accessToken());
+
+        boolean isNewUser = isNewCustomer(jwtSessionKey);
+
+        String sessionKey = null;
+        if (isNewUser) {
+            sessionKey = UUID.randomUUID().toString();
+            authDao.startGuestSession(sessionKey, "CUSTOMER_GUEST");
+
+            TicketRequest upsertRequest = new TicketRequest();
+            upsertRequest.setType("CUSTOMER");
+            upsertRequest.setSessionKey(sessionKey);
+            upsertRequest.setCognitoUserId(userResponse.username());
+            upsertRequest.setEmail(email);
+            upsertRequest.setPhone(null);
+            upsertRequest.setFirstName(null);
+            upsertRequest.setLastName(null);
+            upsertRequest.setDateOfBirth(null);
+
+            adminService.upsertUser(upsertRequest);
+        }
+
+        authDao.startClientCustomerSession(
+                userResponse.username(), jwtSessionKey, "CUSTOMER_LOGIN", sessionKey
+        );
+
+        boolean isProfileComplete = checkProfileCompletion(jwtSessionKey);
+
+        return Map.of(
+                "status", "SUCCESS",
+                "accessToken", authResult.accessToken(),
+                "idToken", authResult.idToken(),
+                "tokenType", authResult.tokenType(),
+                "sessionKey", jwtSessionKey,
+                "cognitoUserId", userResponse.username(),
+                "isNewUser", isNewUser,
+                "isProfileComplete", isProfileComplete
+        );
+    }
+
+    /*
+     * ===============================================================
+     * ENSURE COGNITO IDENTITY EXISTS + TENANT MATCHES (fail fast)
+     * ===============================================================
+     */
+    private void ensureCognitoIdentityExistsAndTenantMatches(String email, String tenantId) {
+        try {
+            AdminGetUserResponse existing = cognitoClient.adminGetUser(
+                    AdminGetUserRequest.builder().userPoolId(userPoolId).username(email).build()
+            );
+
+            String existingTenant = getTenantAttribute(existing)
+                    .orElseThrow(() -> new BadRequestException("Tenant attribute missing for customer"));
+
+            if (!existingTenant.equalsIgnoreCase(tenantId)) {
+                throw new BadRequestException("Customer is not registered for tenant: " + tenantId);
+            }
+
+            log.info("Existing Cognito user {} matches tenant {}, proceeding to CUSTOM_AUTH",
+                    sanitizeForLog(email), tenantId);
+
+        } catch (UserNotFoundException ex) {
+            log.info("First-time user {}, creating minimal Cognito stub for tenant {}",
+                    sanitizeForLog(email), tenantId);
+            cognitoClient.adminCreateUser(
+                    AdminCreateUserRequest.builder()
+                            .userPoolId(userPoolId)
+                            .username(email)
+                            .userAttributes(
+                                    AttributeType.builder().name("email").value(email).build(),
+                                    AttributeType.builder().name("email_verified").value("false").build(),
+                                    AttributeType.builder().name("custom:ActiveTenantId").value(tenantId).build()
+                            )
+                            .messageAction(MessageActionType.SUPPRESS)
+                            .build()
+            );
+        }
+    }
+
+    private Optional<String> getTenantAttribute(AdminGetUserResponse response) {
+        return response.userAttributes().stream()
+                .filter(a -> "custom:ActiveTenantId".equalsIgnoreCase(a.name()))
+                .map(AttributeType::value)
+                .findFirst();
+    }
+
+    /*
+     * ===============================================================
+     * SESSION KEY / PROFILE HELPERS
+     * ===============================================================
+     */
+    private String extractStableSessionKey(String accessToken) {
+        try {
+            String payload = accessToken.split("\\.")[1];
+            String decoded = new String(Base64.getUrlDecoder().decode(payload), StandardCharsets.UTF_8);
+            ObjectMapper mapper = new ObjectMapper();
+            Map<?, ?> claims = mapper.readValue(decoded, Map.class);
+            Object originJti = claims.get("origin_jti");
+            if (originJti != null) return originJti.toString();
+            return claims.get("jti").toString();
+        } catch (Exception ex) {
+            log.warn("Could not extract origin_jti, fallback to UUID");
+            return UUID.randomUUID().toString();
+        }
+    }
+
+    private boolean isNewCustomer(String sessionKey) {
+        CustomerProfileResponseDTO customerProfile = adminDao.getCustomerProfile(sessionKey);
+        return customerProfile == null || customerProfile.getCustomerProfileDTO() == null;
+    }
+
+    private boolean checkProfileCompletion(String sessionKey) {
+        CustomerProfileResponseDTO customerProfile = adminDao.getCustomerProfile(sessionKey);
+        if (customerProfile == null || customerProfile.getCustomerProfileDTO() == null) return false;
+        return StringUtils.isNotBlank(customerProfile.getCustomerProfileDTO().getFirstName())
+                && StringUtils.isNotBlank(customerProfile.getCustomerProfileDTO().getLastName());
+    }
+
+    /*
+     * ===============================================================
+     * OTP GENERATION (KEPT — used by CognitoAdminService for temp passwords)
+     * ===============================================================
+     */
+    public String generateOtp() {
+        String upper = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+        String lower = "abcdefghijklmnopqrstuvwxyz";
+        String digits = "0123456789";
+        String special = "!@#$%";
+        String all = upper + lower + digits + special;
+
+        StringBuilder otp = new StringBuilder();
+        otp.append(upper.charAt(secureRandom.nextInt(upper.length())));
+        otp.append(lower.charAt(secureRandom.nextInt(lower.length())));
+        otp.append(digits.charAt(secureRandom.nextInt(digits.length())));
+        otp.append(special.charAt(secureRandom.nextInt(special.length())));
+
+        for (int i = 0; i < 4; i++) {
+            otp.append(all.charAt(secureRandom.nextInt(all.length())));
+        }
+
+        List<Character> chars = new ArrayList<>();
+        for (char c : otp.toString().toCharArray()) {
+            chars.add(c);
+        }
+        Collections.shuffle(chars, secureRandom);
+
+        StringBuilder finalOtp = new StringBuilder();
+        for (char c : chars) {
+            finalOtp.append(c);
+        }
+        return finalOtp.toString();
+    }
+
+    /*
+     * ===============================================================
+     * EMAIL (KEPT — used by CognitoAdminService for temp password welcome email)
+     * ===============================================================
+     */
+    public void sendEmail(String toEmail, String otp, String tempPassword) {
+        String subject = "Your Login OTP";
+        String bodyHtml;
+        if (tempPassword != null && !tempPassword.isEmpty()) {
+            subject = "Welcome - Your Account Details";
+            String loginLink = hostedUiUrl + "?client_id=" + adminClientId + "&response_type=code"
+                    + "&scope=email+openid+phone" + "&redirect_uri=" + redirectUri;
+            bodyHtml = "<html><body>"
+                    + "<h3>Welcome to Our Platform!</h3>"
+                    + "<p>Your account has been created by an admin.<p>"
+                    + "<p><b>Username:</b> " + toEmail + "</p>"
+                    + "<p><b>Temporary Password:</b> " + tempPassword + "</p>"
+                    + "<p>Please click the link below to login and set your new password:</p>"
+                    + "<a href='" + loginLink + "' "
+                    + "style='background:#007bff;color:white;padding:10px 20px;"
+                    + "text-decoration:none;border-radius:5px;'>Login Here</a>"
+                    + "<br><br><p>This temporary password will expire after first use.</p>"
+                    + "</body></html>";
+        } else {
+            bodyHtml = "<html><body><h3>Your Login OTP</h3><p>Your One-Time Password (OTP) for login is: <b>"
+                    + otp + "</b></p><p>This OTP will expire in 5 minutes.</p></body></html>";
+        }
+        try {
+            MimeMessage message = mailSender.createMimeMessage();
+            MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
+            helper.setFrom(fromMail);
+            helper.setTo(toEmail);
+            helper.setSubject(subject);
+            helper.setText(bodyHtml, true);
+            mailSender.send(message);
+        } catch (MessagingException e) {
+            log.error("Failed to send email to {}", toEmail, e);
+            throw new RuntimeException("Failed to send email", e);
+        }
+    }
+
+    private String calculateSecretHash(String username) {
+        try {
+            String message = username + clientId;
+            SecretKeySpec signingKey = new SecretKeySpec(
+                    clientSecret.getBytes(StandardCharsets.UTF_8), "HmacSHA256"
+            );
+            Mac mac = Mac.getInstance("HmacSHA256");
+            mac.init(signingKey);
+            byte[] rawHmac = mac.doFinal(message.getBytes(StandardCharsets.UTF_8));
+            return Base64.getEncoder().encodeToString(rawHmac);
+        } catch (Exception ex) {
+            throw new RuntimeException("Error calculating secret hash", ex);
+        }
+    }
+
+    private void validateEmail(String email) {
+        if (email == null || email.isBlank()) {
+            throw new IllegalArgumentException("Email required");
+        }
+        if (!email.matches("^[\\w.-]+@[\\w.-]+\\.[a-zA-Z]{2,}$")) {
+            throw new IllegalArgumentException("Invalid email");
+        }
+    }
+
+    private void validateVerifyRequest(VerifyEmailOtp request) {
+        validateEmail(request.getEmail());
+        if (request.getOtp() == null || request.getOtp().isBlank()) {
+            throw new IllegalArgumentException("OTP required");
+        }
+        if (request.getSession() == null || request.getSession().isBlank()) {
+            throw new IllegalArgumentException("Session required");
+        }
+    }
+
+    private String sanitizeForLog(String value) {
+        return value == null ? "null" : value.replaceAll("[\r\n\t]", "_");
+    }
 }
 
-/*
- * ===============================================================
- * STEP 2: VERIFY OTP + LOGIN + SESSION START
- * ===============================================================
- */
-export async function verifyOtpAuth(
-  userName: string,
-  session: string,
-  otp: string,
-  logger: any,
-  tenantId: string,
-) {
-  const clientId = process.env.AWS_CUST_CLIENT_ID;
-  const region = process.env.AWS_REGION;
-  const userPoolId = process.env.AWS_CUST_USERPOOL_ID;
-  const secretHash = getSecretHash(userName);
-  const client = new CognitoIdentityProviderClient({ region });
 
-  try {
-    logger.info("Verifying CUSTOM_AUTH challenge response...");
 
-    const initCommand = new AdminRespondToAuthChallengeCommand({
-      UserPoolId: userPoolId,
-      ClientId: clientId,
-      ChallengeName: "CUSTOM_CHALLENGE",
-      Session: session,
-      ChallengeResponses: {
-        USERNAME: userName,
-        ANSWER: otp,
-        SECRET_HASH: secretHash,
-      },
-      ClientMetadata: {
-        tenantId: tenantId,
-      },
-    });
 
-    const response = await client.send(initCommand);
 
-    if (!response.AuthenticationResult?.AccessToken) {
-      throw new Error("AWS did not return a OTP Session.");
+
+
+
+package com.hlt.api.controller;
+
+import com.hlt.api.dtos.request.SendEmailOtp;
+import com.hlt.api.dtos.request.VerifyEmailOtp;
+import com.hlt.api.service.serviceimpl.OtpAuthService;
+import org.springframework.web.bind.annotation.*;
+
+import java.util.Map;
+
+@RestController
+@RequestMapping("/public/auth")
+public class PublicAuthController {
+
+    private final OtpAuthService otpAuthService;
+
+    public PublicAuthController(OtpAuthService otpAuthService) {
+        this.otpAuthService = otpAuthService;
     }
 
-    const accessToken = response.AuthenticationResult.AccessToken;
-    const idToken = response.AuthenticationResult.IdToken || "";
-    const refreshToken = response.AuthenticationResult.RefreshToken;
-    const cognitoUserId = jwtDecode<any>(idToken)?.sub;
-
-    /*
-     * ---- TENANT VALIDATION ----
-     * (mirrors old Java ensureCustomerExistsInCognito tenant check)
-     */
-    const userResponse = await client.send(
-      new AdminGetUserCommand({ UserPoolId: userPoolId, Username: userName }),
-    );
-
-    const tenantAttr = userResponse.UserAttributes?.find(
-      (a) => a.Name?.toLowerCase() === "custom:activetenantid",
-    )?.Value;
-
-    if (!tenantAttr) {
-      throw new Error("Tenant attribute missing for customer");
-    }
-    if (tenantAttr.toLowerCase() !== tenantId.toLowerCase()) {
-      throw new Error(`Customer is not registered for tenant: ${tenantId}`);
+    @PostMapping("/send-otp")
+    public Map<String, Object> sendOtp(
+            @RequestBody SendEmailOtp emailOtp,
+            @RequestHeader("x-tenant-id") String tenantName) {
+        return otpAuthService.initiateOtpAuth(emailOtp, tenantName);
     }
 
-    /*
-     * ---- STABLE SESSION KEY ----
-     */
-    const jwtSessionKey = extractStableSessionKey(accessToken, logger);
-
-    /*
-     * ---- NEW USER CHECK ----
-     * >>> ADD HERE: getCustomerProfile currently takes (token, logger) and
-     * hits GET /api/v1/admin/customerprofile with no request body — confirm
-     * Java resolves "which customer" from the Bearer token itself (i.e. it
-     * decodes the Cognito user from the token server-side). If it instead
-     * needs the sessionKey/cognitoUserId explicitly, add that as a second
-     * arg to getCustomerProfile in adminService.ts.
-     */
-    const existingProfile = await getCustomerProfile(accessToken, logger);
-    const isNewUser = !existingProfile?.customerProfileDTO;
-
-    /*
-     * ---- NEW USER PROFILE BOOTSTRAP ----
-     */
-    if (isNewUser) {
-      // Step 1: bootstrap guest session (Java generates its own sessionKey)
-      const guestSessionResponse = await startSession(
-        { type: "CUSTOMER_GUEST", queryString: jwtSessionKey },
-        accessToken,
-        logger,
-      );
-      logger.info("Guest session bootstrapped", guestSessionResponse);
-
-      // >>> ADD HERE: pull the sessionKey Java generated out of the
-      // response so it can be passed to upsertUser below. Field name is a
-      // guess — replace `guestSessionResponse.sessionKey` with whatever
-      // SessionResponse actually returns (check typeDefs.ts SessionResponse type).
-      const guestSessionKey = guestSessionResponse?.sessionKey;
-
-      // Step 2: upsert bare CUSTOMER profile
-      // >>> ADD HERE: UpsertUser input currently has NO sessionKey field.
-      // Per your earlier answer, decide: (a) add sessionKey to the
-      // UpsertUser GraphQL input + Java DTO so this call can pass
-      // guestSessionKey below, or (b) confirm Java links guest session ->
-      // customer record via email/cognitoUserId instead, in which case
-      // remove the sessionKey line entirely.
-      await upsertUser(
-        {
-          type: "CUSTOMER",
-          email: userName,
-          phone: "",
-          firstName: "",
-          lastName: "",
-          dateOfBirth: "",
-          // sessionKey: guestSessionKey,   // <-- uncomment once (a) is done
-        },
-        accessToken,
-        logger,
-      );
+    @PostMapping("/verify-otp")
+    public Map<String, Object> verifyOtp(
+            @RequestBody VerifyEmailOtp verifyEmailOtp,
+            @RequestHeader("x-tenant-id") String tenantName) {
+        return otpAuthService.verifyOtpAndLogin(verifyEmailOtp, tenantName);
     }
-
-    /*
-     * ---- START CUSTOMER LOGIN SESSION ----
-     */
-    const sessionResponse = await startSession(
-      {
-        type: "CUSTOMER_LOGIN",
-        queryString: jwtSessionKey,
-        cognitoUserId: userName,
-      },
-      accessToken,
-      logger,
-    );
-    logger.info("Customer login session started", sessionResponse);
-
-    /*
-     * ---- PROFILE COMPLETION CHECK ----
-     */
-    const profileCheck = await getCustomerProfile(accessToken, logger);
-    const isProfileComplete =
-      !!profileCheck?.customerProfileDTO?.firstName &&
-      !!profileCheck?.customerProfileDTO?.lastName;
-
-    logger.info("Token successfully cached in Redis");
-
-    return {
-      status: "SUCCESS",
-      accessToken,
-      idToken,
-      refreshToken,
-      tokenType: response.AuthenticationResult.TokenType,
-      sessionKey: jwtSessionKey,
-      cognitoUserId: userName,
-      isNewUser,
-      isProfileComplete,
-    };
-  } catch (error: any) {
-    console.log(`Error: ${JSON.stringify(error)}`);
-    throw new Error(`AWS Error: ${error.message}`);
-  }
-}
-
-function getSecretHash(userName: string) {
-  const clientId = process.env.AWS_CUST_CLIENT_ID;
-  const clientSecret = process.env.AWS_CUST_CLIENT_SECRET;
-
-  const secretHash = createHmac("sha256", clientSecret!)
-    .update(userName + clientId)
-    .digest("base64");
-
-  console.log(`Secret Hash: ${secretHash}`);
-  return secretHash;
-}
-
-/*
- * ===============================================================
- * SESSION KEY EXTRACTION
- * ===============================================================
- */
-function extractStableSessionKey(accessToken: string, logger: any): string {
-  try {
-    const payload = accessToken.split(".")[1];
-    const decoded = JSON.parse(
-      Buffer.from(payload, "base64url").toString("utf8"),
-    );
-
-    if (decoded.origin_jti) return decoded.origin_jti.toString();
-    return decoded.jti.toString();
-  } catch (ex) {
-    logger.warn("Could not extract origin_jti, fallback to UUID");
-    return crypto.randomUUID();
-  }
-}
-
-/*
- * ===============================================================
- * REFRESH TOKEN (unchanged, already exists)
- * ===============================================================
- */
-export async function refreshToken(
-  userId: string,
-  token: string,
-  logger: any,
-  tenantId: string,
-) {
-  if (!token) {
-    logger.error("Invalid token");
-    throw "Invalid token";
-  }
-
-  const region = process.env.AWS_REGION;
-  const clientId = process.env.AWS_CUST_CLIENT_ID;
-  const client = new CognitoIdentityProviderClient({ region });
-  const secretHash = getSecretHash(userId);
-  try {
-    logger.info(
-      `Initiating Choice-based REFRESH_TOKEN_AUTH ...${tenantId}`,
-    );
-
-    const initCommand = new InitiateAuthCommand({
-      AuthFlow: "REFRESH_TOKEN_AUTH",
-      ClientId: clientId,
-      AuthParameters: {
-        REFRESH_TOKEN: token,
-        SECRET_HASH: secretHash,
-      },
-    });
-
-    const response = await client.send(initCommand);
-
-    console.log(`Response: ${JSON.stringify(response)}`);
-    if (response.AuthenticationResult?.AccessToken) {
-      const accessToken = response.AuthenticationResult.AccessToken;
-      const idToken = response.AuthenticationResult.IdToken;
-      const refreshToken = response.AuthenticationResult.RefreshToken;
-
-      logger.info("Token successfully cached in Redis");
-      return { token: accessToken, idToken, refreshToken };
-    }
-
-    throw new Error("AWS did not return a token.");
-  } catch (error: any) {
-    throw new Error(`AWS Error: ${error.message}`);
-  }
-}
-
-export async function logout(token: string, logger: any) {
-  if (!token) return true;
-  try {
-    await redisClient.del(`session:${token}`);
-    logger.info("Token successfully revoked from Redis");
-    return true;
-  } catch (error: any) {
-    logger.error("Redis logout failed", { error: error.message });
-    return false;
-  }
 }
