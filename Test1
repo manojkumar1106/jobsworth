@@ -465,3 +465,77 @@ public class PublicAuthController {
         return otpAuthService.verifyOtpAndLogin(verifyEmailOtp, tenantName);
     }
 }
+
+
+
+
+
+
+private final Cache<String, Boolean> newUserCache = Caffeine.newBuilder()
+        .expireAfterWrite(Duration.ofMinutes(5))
+        .maximumSize(100_000)
+        .build();
+
+
+
+        boolean isNewUser = ensureCognitoIdentityExistsAndTenantMatches(email, tenantId);
+        newUserCache.put(email, isNewUser);
+
+
+
+            log.info("Existing Cognito user {} matches tenant {}, proceeding to CUSTOM_AUTH",
+                    sanitizeForLog(email), tenantId);
+            return false;
+
+        } catch (UserNotFoundException ex) {
+
+
+
+
+
+                            .messageAction(MessageActionType.SUPPRESS)
+                            .build()
+            );
+            return true;
+        }
+    }
+
+
+
+
+
+        Boolean cachedIsNewUser = newUserCache.getIfPresent(email);
+        newUserCache.invalidate(email);
+
+        AdminGetUserResponse userResponse = cognitoClient.adminGetUser(
+                AdminGetUserRequest.builder().userPoolId(userPoolId).username(email).build()
+        );
+
+        boolean isNewUser = cachedIsNewUser != null
+                ? cachedIsNewUser
+                : userResponse.userAttributes().stream()
+                        .filter(a -> "email_verified".equalsIgnoreCase(a.name()))
+                        .map(AttributeType::value)
+                        .findFirst()
+                        .map(v -> "false".equalsIgnoreCase(v))
+                        .orElse(false);
+
+        String tenantAttr = getTenantAttribute(userResponse)
+                .orElseThrow(() -> new BadRequestException("Tenant attribute missing for customer"));
+        if (!tenantAttr.equalsIgnoreCase(tenantId)) {
+            throw new BadRequestException("Customer is not registered for tenant: " + tenantId);
+        }
+
+        cognitoClient.adminUpdateUserAttributes(
+                AdminUpdateUserAttributesRequest.builder()
+                        .userPoolId(userPoolId)
+                        .username(email)
+                        .userAttributes(
+                                AttributeType.builder().name("email_verified").value("true").build()
+                        )
+                        .build()
+        );
+
+        String jwtSessionKey = extractStableSessionKey(authResult.accessToken());
+
+
