@@ -114,6 +114,34 @@ async function checkIsNewUser(
         const data = await response.json();
         return !data.exists; // true = new user
     } catch (error) {
-        return true; // default to new user
+        return true; // default to new async function startGuestSession(
+    guestSessionKey: string,
+    logger: any
+): Promise<any> {
+    try {
+        const response = await fetch(
+            `${process.env.API_URL}/api/v1/auth/guest-session`,
+            {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    sessionKey: guestSessionKey,
+                    type: "guest"
+                })
+            }
+        );
+        return await response.json();
+    } catch (error: any) {
+        logger.error(
+            `Guest session failed: ${error.message}`
+        );
+        return { success: false, data: "" };
     }
 }
+
+
+
+
+
