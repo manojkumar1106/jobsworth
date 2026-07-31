@@ -89,3 +89,31 @@ export async function verifyOtpAuth(
             `AWS Error: ${error.message}`);
     }
 }
+
+
+
+
+
+async function checkIsNewUser(
+    email: string,
+    tenantId: string
+): Promise<boolean> {
+    try {
+        // Call Java API to check DB
+        const response = await fetch(
+            `${process.env.API_URL}/api/v1/customer/exists`,
+            {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'x-tenant-id': tenantId
+                },
+                body: JSON.stringify({ email })
+            }
+        );
+        const data = await response.json();
+        return !data.exists; // true = new user
+    } catch (error) {
+        return true; // default to new user
+    }
+}
