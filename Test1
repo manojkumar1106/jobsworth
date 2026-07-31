@@ -1,147 +1,338 @@
-export async function verifyOtpAuth(
-    userName: string,
-    session: string,
-    otp: string,
-    logger: any,
-    tenantId: string,
+import {
+  AdminInitiateAuthCommand,
+  AdminRespondToAuthChallengeCommand,
+  AdminGetUserCommand,
+  CognitoIdentityProviderClient,
+  InitiateAuthCommand,
+} from "@aws-sdk/client-cognito-identity-provider";
+import { createHmac } from "crypto";
+import { redisClient } from "../../redisClient";
+import { jwtDecode } from "jwt-decode";
+import { startSession, endSession } from "./loginSession";
+import { upsertUser, getCustomerProfile } from "../admin/adminService";
+
+/*
+ * ===============================================================
+ * STEP 1: INITIATE OTP (Cognito CUSTOM_AUTH)
+ * ===============================================================
+ */
+export async function initiateOtpAuth(
+  userName: string,
+  logger: any,
+  tenantId: string,
 ) {
-    const clientId = process.env.AWS_CUST_CLIENT_ID;
-    const region = process.env.AWS_REGION;
-    const userPoolId = process.env.AWS_CUST_USERPOOL_ID;
-    const secretHash = getSecretHash(userName);
-    const client = new CognitoIdentityProviderClient(
-        { region });
+  const clientId = process.env.AWS_CUST_CLIENT_ID;
+  const region = process.env.AWS_REGION;
+  const userPoolId = process.env.AWS_CUST_USERPOOL_ID;
+  const secretHash = getSecretHash(userName);
+  const client = new CognitoIdentityProviderClient({ region });
 
-    try {
-        // Respond to custom challenge with OTP
-        const initCommand = new 
-            AdminRespondToAuthChallengeCommand({
-                UserPoolId: userPoolId,
-                ClientId: clientId,
-                ChallengeName: "CUSTOM_CHALLENGE",
-                Session: session,
-                ChallengeResponses: {
-                    USERNAME: userName,
-                    ANSWER: otp,
-                    SECRET_HASH: secretHash,
-                },
-                ClientMetadata: {
-                    tenantId: tenantId,
-                },
-            });
+  try {
+    logger.info("Initiating CUSTOM_AUTH flow with upfront password...");
+    console.log(
+      `Pool: ${userPoolId} - Client: ${clientId} - UserName: ${userName}`,
+    );
 
-        const response = await client.send(initCommand);
+    // >>> CONFIRM: AdminInitiateAuth with CUSTOM_AUTH requires the Cognito
+    // user to already exist. If it doesn't, this throws UserNotFoundException.
+    // Decide here whether to auto-create the user first (mirrors old Java
+    // autoRegisterCustomer) before calling adminInitiateAuth, e.g.:
+    //
+    //   try {
+    //     await client.send(new AdminGetUserCommand({ UserPoolId: userPoolId, Username: userName }));
+    //   } catch (err: any) {
+    //     if (err.name === "UserNotFoundException") {
+    //       // call adminCreateUser here with custom:ActiveTenantId = tenantId
+    //     } else {
+    //       throw err;
+    //     }
+    //   }
 
-        if (response.AuthenticationResult?.AccessToken) {
-            const accessToken = 
-                response.AuthenticationResult.AccessToken;
-            const idToken = 
-                response.AuthenticationResult.IdToken || "";
-            const refreshToken = 
-                response.AuthenticationResult.RefreshToken;
-            
-            // Extract cognitoUserId
-            const cognitoUserId = 
-                jwtDecode(idToken)?.sub;
+    const initCommand = new AdminInitiateAuthCommand({
+      UserPoolId: userPoolId,
+      ClientId: clientId,
+      AuthFlow: "CUSTOM_AUTH",
+      AuthParameters: {
+        USERNAME: userName,
+        SECRET_HASH: secretHash,
+      },
+      ClientMetadata: {
+        tenantId: tenantId,
+      },
+    });
 
-            logger.info("Token successfully cached in Redis");
+    const response = await client.send(initCommand);
 
-            // Check new vs existing user
-            const isNewUser = await checkIsNewUser(
-                userName, tenantId);
-
-            let sessionKey = "";
-
-            if (isNewUser) {
-                // NEW USER → UUID guest session
-                const guestKey = crypto.randomUUID();
-                await startGuestSession(guestKey, logger);
-                sessionKey = guestKey;
-            } else {
-                // EXISTING USER → JWT stable key
-                const sessionResponse = 
-                    await startSession(
-                        { type: "customer" },
-                        accessToken,
-                        logger
-                    );
-                sessionKey = 
-                    sessionResponse?.data || "";
-            }
-
-            return { 
-                cognitoUserId,
-                accessToken,
-                idToken,
-                refreshToken,
-                sessionKey,
-                isNewUser  // ← frontend routing
-            };
-        }
-
-        throw new Error(
-            "AWS did not return a OTP Session.");
-
-    } catch (error: any) {
-        console.log(
-            `Error: ${JSON.stringify(error)}`);
-        throw new Error(
-            `AWS Error: ${error.message}`);
+    if (response.ChallengeName) {
+      const challengeName = response.ChallengeName;
+      const challengeSession = response.Session;
+      const userId = response.ChallengeParameters?.USERNAME;
+      return { challengeName, userId, userName, challengeSession };
     }
+
+    throw new Error("AWS did not return a OTP Session.");
+  } catch (error: any) {
+    console.log(`Error: ${JSON.stringify(error)}`);
+    throw new Error(`AWS Error: ${error.message}`);
+  }
 }
 
+/*
+ * ===============================================================
+ * STEP 2: VERIFY OTP + LOGIN + SESSION START
+ * ===============================================================
+ */
+export async function verifyOtpAuth(
+  userName: string,
+  session: string,
+  otp: string,
+  logger: any,
+  tenantId: string,
+) {
+  const clientId = process.env.AWS_CUST_CLIENT_ID;
+  const region = process.env.AWS_REGION;
+  const userPoolId = process.env.AWS_CUST_USERPOOL_ID;
+  const secretHash = getSecretHash(userName);
+  const client = new CognitoIdentityProviderClient({ region });
 
+  try {
+    logger.info("Verifying CUSTOM_AUTH challenge response...");
 
+    const initCommand = new AdminRespondToAuthChallengeCommand({
+      UserPoolId: userPoolId,
+      ClientId: clientId,
+      ChallengeName: "CUSTOM_CHALLENGE",
+      Session: session,
+      ChallengeResponses: {
+        USERNAME: userName,
+        ANSWER: otp,
+        SECRET_HASH: secretHash,
+      },
+      ClientMetadata: {
+        tenantId: tenantId,
+      },
+    });
 
+    const response = await client.send(initCommand);
 
-async function checkIsNewUser(
-    email: string,
-    tenantId: string
-): Promise<boolean> {
-    try {
-        // Call Java API to check DB
-        const response = await fetch(
-            `${process.env.API_URL}/api/v1/customer/exists`,
-            {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'x-tenant-id': tenantId
-                },
-                body: JSON.stringify({ email })
-            }
-        );
-        const data = await response.json();
-        return !data.exists; // true = new user
-    } catch (error) {
-        return true; // default to new async function startGuestSession(
-    guestSessionKey: string,
-    logger: any
-): Promise<any> {
-    try {
-        const response = await fetch(
-            `${process.env.API_URL}/api/v1/auth/guest-session`,
-            {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    sessionKey: guestSessionKey,
-                    type: "guest"
-                })
-            }
-        );
-        return await response.json();
-    } catch (error: any) {
-        logger.error(
-            `Guest session failed: ${error.message}`
-        );
-        return { success: false, data: "" };
+    if (!response.AuthenticationResult?.AccessToken) {
+      throw new Error("AWS did not return a OTP Session.");
     }
+
+    const accessToken = response.AuthenticationResult.AccessToken;
+    const idToken = response.AuthenticationResult.IdToken || "";
+    const refreshToken = response.AuthenticationResult.RefreshToken;
+    const cognitoUserId = jwtDecode<any>(idToken)?.sub;
+
+    /*
+     * ---- TENANT VALIDATION ----
+     * (mirrors old Java ensureCustomerExistsInCognito tenant check)
+     */
+    const userResponse = await client.send(
+      new AdminGetUserCommand({ UserPoolId: userPoolId, Username: userName }),
+    );
+
+    const tenantAttr = userResponse.UserAttributes?.find(
+      (a) => a.Name?.toLowerCase() === "custom:activetenantid",
+    )?.Value;
+
+    if (!tenantAttr) {
+      throw new Error("Tenant attribute missing for customer");
+    }
+    if (tenantAttr.toLowerCase() !== tenantId.toLowerCase()) {
+      throw new Error(`Customer is not registered for tenant: ${tenantId}`);
+    }
+
+    /*
+     * ---- STABLE SESSION KEY ----
+     */
+    const jwtSessionKey = extractStableSessionKey(accessToken, logger);
+
+    /*
+     * ---- NEW USER CHECK ----
+     * >>> ADD HERE: getCustomerProfile currently takes (token, logger) and
+     * hits GET /api/v1/admin/customerprofile with no request body — confirm
+     * Java resolves "which customer" from the Bearer token itself (i.e. it
+     * decodes the Cognito user from the token server-side). If it instead
+     * needs the sessionKey/cognitoUserId explicitly, add that as a second
+     * arg to getCustomerProfile in adminService.ts.
+     */
+    const existingProfile = await getCustomerProfile(accessToken, logger);
+    const isNewUser = !existingProfile?.customerProfileDTO;
+
+    /*
+     * ---- NEW USER PROFILE BOOTSTRAP ----
+     */
+    if (isNewUser) {
+      // Step 1: bootstrap guest session (Java generates its own sessionKey)
+      const guestSessionResponse = await startSession(
+        { type: "CUSTOMER_GUEST", queryString: jwtSessionKey },
+        accessToken,
+        logger,
+      );
+      logger.info("Guest session bootstrapped", guestSessionResponse);
+
+      // >>> ADD HERE: pull the sessionKey Java generated out of the
+      // response so it can be passed to upsertUser below. Field name is a
+      // guess — replace `guestSessionResponse.sessionKey` with whatever
+      // SessionResponse actually returns (check typeDefs.ts SessionResponse type).
+      const guestSessionKey = guestSessionResponse?.sessionKey;
+
+      // Step 2: upsert bare CUSTOMER profile
+      // >>> ADD HERE: UpsertUser input currently has NO sessionKey field.
+      // Per your earlier answer, decide: (a) add sessionKey to the
+      // UpsertUser GraphQL input + Java DTO so this call can pass
+      // guestSessionKey below, or (b) confirm Java links guest session ->
+      // customer record via email/cognitoUserId instead, in which case
+      // remove the sessionKey line entirely.
+      await upsertUser(
+        {
+          type: "CUSTOMER",
+          email: userName,
+          phone: "",
+          firstName: "",
+          lastName: "",
+          dateOfBirth: "",
+          // sessionKey: guestSessionKey,   // <-- uncomment once (a) is done
+        },
+        accessToken,
+        logger,
+      );
+    }
+
+    /*
+     * ---- START CUSTOMER LOGIN SESSION ----
+     */
+    const sessionResponse = await startSession(
+      {
+        type: "CUSTOMER_LOGIN",
+        queryString: jwtSessionKey,
+        cognitoUserId: userName,
+      },
+      accessToken,
+      logger,
+    );
+    logger.info("Customer login session started", sessionResponse);
+
+    /*
+     * ---- PROFILE COMPLETION CHECK ----
+     */
+    const profileCheck = await getCustomerProfile(accessToken, logger);
+    const isProfileComplete =
+      !!profileCheck?.customerProfileDTO?.firstName &&
+      !!profileCheck?.customerProfileDTO?.lastName;
+
+    logger.info("Token successfully cached in Redis");
+
+    return {
+      status: "SUCCESS",
+      accessToken,
+      idToken,
+      refreshToken,
+      tokenType: response.AuthenticationResult.TokenType,
+      sessionKey: jwtSessionKey,
+      cognitoUserId: userName,
+      isNewUser,
+      isProfileComplete,
+    };
+  } catch (error: any) {
+    console.log(`Error: ${JSON.stringify(error)}`);
+    throw new Error(`AWS Error: ${error.message}`);
+  }
 }
 
+function getSecretHash(userName: string) {
+  const clientId = process.env.AWS_CUST_CLIENT_ID;
+  const clientSecret = process.env.AWS_CUST_CLIENT_SECRET;
 
+  const secretHash = createHmac("sha256", clientSecret!)
+    .update(userName + clientId)
+    .digest("base64");
 
+  console.log(`Secret Hash: ${secretHash}`);
+  return secretHash;
+}
 
+/*
+ * ===============================================================
+ * SESSION KEY EXTRACTION
+ * ===============================================================
+ */
+function extractStableSessionKey(accessToken: string, logger: any): string {
+  try {
+    const payload = accessToken.split(".")[1];
+    const decoded = JSON.parse(
+      Buffer.from(payload, "base64url").toString("utf8"),
+    );
 
+    if (decoded.origin_jti) return decoded.origin_jti.toString();
+    return decoded.jti.toString();
+  } catch (ex) {
+    logger.warn("Could not extract origin_jti, fallback to UUID");
+    return crypto.randomUUID();
+  }
+}
+
+/*
+ * ===============================================================
+ * REFRESH TOKEN (unchanged, already exists)
+ * ===============================================================
+ */
+export async function refreshToken(
+  userId: string,
+  token: string,
+  logger: any,
+  tenantId: string,
+) {
+  if (!token) {
+    logger.error("Invalid token");
+    throw "Invalid token";
+  }
+
+  const region = process.env.AWS_REGION;
+  const clientId = process.env.AWS_CUST_CLIENT_ID;
+  const client = new CognitoIdentityProviderClient({ region });
+  const secretHash = getSecretHash(userId);
+  try {
+    logger.info(
+      `Initiating Choice-based REFRESH_TOKEN_AUTH ...${tenantId}`,
+    );
+
+    const initCommand = new InitiateAuthCommand({
+      AuthFlow: "REFRESH_TOKEN_AUTH",
+      ClientId: clientId,
+      AuthParameters: {
+        REFRESH_TOKEN: token,
+        SECRET_HASH: secretHash,
+      },
+    });
+
+    const response = await client.send(initCommand);
+
+    console.log(`Response: ${JSON.stringify(response)}`);
+    if (response.AuthenticationResult?.AccessToken) {
+      const accessToken = response.AuthenticationResult.AccessToken;
+      const idToken = response.AuthenticationResult.IdToken;
+      const refreshToken = response.AuthenticationResult.RefreshToken;
+
+      logger.info("Token successfully cached in Redis");
+      return { token: accessToken, idToken, refreshToken };
+    }
+
+    throw new Error("AWS did not return a token.");
+  } catch (error: any) {
+    throw new Error(`AWS Error: ${error.message}`);
+  }
+}
+
+export async function logout(token: string, logger: any) {
+  if (!token) return true;
+  try {
+    await redisClient.del(`session:${token}`);
+    logger.info("Token successfully revoked from Redis");
+    return true;
+  } catch (error: any) {
+    logger.error("Redis logout failed", { error: error.message });
+    return false;
+  }
+}
