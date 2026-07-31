@@ -1,66 +1,91 @@
-// For PROMO_CODE promotions: customer selection cap
-private String selectionGroup;
-private Integer maxSelectablePerGroup;
+export async function verifyOtpAuth(
+    userName: string,
+    session: string,
+    otp: string,
+    logger: any,
+    tenantId: string,
+) {
+    const clientId = process.env.AWS_CUST_CLIENT_ID;
+    const region = process.env.AWS_REGION;
+    const userPoolId = process.env.AWS_CUST_USERPOOL_ID;
+    const secretHash = getSecretHash(userName);
+    const client = new CognitoIdentityProviderClient(
+        { region });
 
-// For AUTOMATIC promotions: system-side mutual exclusion (mirrors SystemDiscount)
-private String stackGroup;
+    try {
+        // Respond to custom challenge with OTP
+        const initCommand = new 
+            AdminRespondToAuthChallengeCommand({
+                UserPoolId: userPoolId,
+                ClientId: clientId,
+                ChallengeName: "CUSTOM_CHALLENGE",
+                Session: session,
+                ChallengeResponses: {
+                    USERNAME: userName,
+                    ANSWER: otp,
+                    SECRET_HASH: secretHash,
+                },
+                ClientMetadata: {
+                    tenantId: tenantId,
+                },
+            });
 
+        const response = await client.send(initCommand);
 
+        if (response.AuthenticationResult?.AccessToken) {
+            const accessToken = 
+                response.AuthenticationResult.AccessToken;
+            const idToken = 
+                response.AuthenticationResult.IdToken || "";
+            const refreshToken = 
+                response.AuthenticationResult.RefreshToken;
+            
+            // Extract cognitoUserId
+            const cognitoUserId = 
+                jwtDecode(idToken)?.sub;
 
+            logger.info("Token successfully cached in Redis");
 
-private String selectionGroup;
-private Integer maxSelectablePerGroup;
-private String stackGroup;
+            // Check new vs existing user
+            const isNewUser = await checkIsNewUser(
+                userName, tenantId);
 
+            let sessionKey = "";
 
+            if (isNewUser) {
+                // NEW USER → UUID guest session
+                const guestKey = crypto.randomUUID();
+                await startGuestSession(guestKey, logger);
+                sessionKey = guestKey;
+            } else {
+                // EXISTING USER → JWT stable key
+                const sessionResponse = 
+                    await startSession(
+                        { type: "customer" },
+                        accessToken,
+                        logger
+                    );
+                sessionKey = 
+                    sessionResponse?.data || "";
+            }
 
+            return { 
+                cognitoUserId,
+                accessToken,
+                idToken,
+                refreshToken,
+                sessionKey,
+                isNewUser  // ← frontend routing
+            };
+        }
 
-p.setSelectionGroup(req.getSelectionGroup());
-p.setMaxSelectablePerGroup(req.getMaxSelectablePerGroup());
-p.setStackGroup(req.getStackGroup());
+        throw new Error(
+            "AWS did not return a OTP Session.");
 
-
-
-
-
-// CHECK 4.5: Selection group cap (applies to PROMO_CODE promotions only)
-Map<String, List<Promotion>> byGroup = selectedPromos.stream()
-        .filter(p -> p.getSelectionGroup() != null)
-        .collect(Collectors.groupingBy(Promotion::getSelectionGroup));
-
-byGroup.forEach((group, promosInGroup) -> {
-    int maxSelectable = promosInGroup.get(0).getMaxSelectablePerGroup() != null
-            ? promosInGroup.get(0).getMaxSelectablePerGroup()
-            : Integer.MAX_VALUE;
-
-    if (promosInGroup.size() > maxSelectable) {
-        throw new RuntimeException("You can select maximum " + maxSelectable
-                + " promotions from group [" + group + "]. You selected: " + promosInGroup.size());
+    } catch (error: any) {
+        console.log(
+            `Error: ${JSON.stringify(error)}`);
+        throw new Error(
+            `AWS Error: ${error.message}`);
     }
-});
-
-
-
-
-
-drl.append("        $result : DiscountResult(\n");
-drl.append("            promoStackLocked == false,\n");
-drl.append("            isRuleAlreadyFired(\"").append(ruleName).append("\") == false");
-
-// NEW: only AUTOMATIC promotions get stackGroup exclusion
-if (p.getRedemptionMethod() == RedemptionMethod.AUTOMATIC
-        && p.getStackGroup() != null && !p.getStackGroup().isEmpty()) {
-    drl.append(",\n            isStackGroupAlreadyFired(\"").append(p.getStackGroup()).append("\") == false");
 }
-
-drl.append("\n        )\n");
-
-
-
-
-if (p.getRedemptionMethod() == RedemptionMethod.AUTOMATIC
-        && p.getStackGroup() != null && !p.getStackGroup().isEmpty()) {
-    drl.append("        $result.markStackGroupFired(\"").append(p.getStackGroup()).append("\");\n");
-}
-
-
