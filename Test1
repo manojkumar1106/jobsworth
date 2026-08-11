@@ -539,3 +539,35 @@ private final Cache<String, Boolean> newUserCache = Caffeine.newBuilder()
         String jwtSessionKey = extractStableSessionKey(authResult.accessToken());
 
 
+
+
+export const handler = async (event) => {
+  console.log(`Event: ${JSON.stringify(event)}`);
+  const session = event.request.session || [];
+
+  if (session.length === 0) {
+    // First attempt - issue challenge
+    event.response.challengeName = "CUSTOM_CHALLENGE";
+    event.response.issueTokens = false;
+    event.response.failAuthentication = false;
+
+  } else if (session[session.length - 1].challengeResult === true) {
+    // Correct OTP - success
+    event.response.issueTokens = true;
+    event.response.failAuthentication = false;
+
+  } else if (session.length < 3) {
+    // Wrong OTP, but retries remain - issue challenge again
+    event.response.challengeName = "CUSTOM_CHALLENGE";
+    event.response.issueTokens = false;
+    event.response.failAuthentication = false;
+
+  } else {
+    // 3 failed attempts - fail authentication
+    event.response.issueTokens = false;
+    event.response.failAuthentication = true;
+  }
+
+  return event;
+};
+
