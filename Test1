@@ -4,140 +4,51 @@ import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.Setter;
 
+import java.time.Instant;
+
 @Entity
-@Table(name = "Location", schema = "C1")
+@Table(name = "General_Admission", schema = "C1")
 @Getter
 @Setter
-public class Location {
+public class GeneralAdmission {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
-    @Column(name = "Location_Id")
+    @Column(name = "GA_Id")
+    private Integer gaId;
+
+    @Column(name = "Location_Id", nullable = false)
     private Integer locationId;
 
-    @Column(name = "Location_Name", nullable = false)
-    private String locationName;
+    @Column(name = "Start_Date_Time_Utc", nullable = false)
+    private Instant startDateTimeUtc;
 
-    @Column(name = "Parent_Location_Id")
-    private Integer parentLocationId;
-
-    @Column(name = "Is_Removed")
-    private Boolean removed;
-
-    @Column(name = "Time_Zone", length = 100)
-    private String timeZone;
+    @Column(name = "End_Date_Time_Utc", nullable = false)
+    private Instant endDateTimeUtc;
 }
-
-
-
-
-
 
 
 
 
 package hlt.promo.engine.repository;
 
-import hlt.promo.engine.model.Location;
+import hlt.promo.engine.model.GeneralAdmission;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 
 @Repository
-public interface LocationRepository extends JpaRepository<Location, Integer> {
+public interface GeneralAdmissionRepository extends JpaRepository<GeneralAdmission, Integer> {
 }
 
 
-
-
-
-package hlt.promo.engine.service;
-
-import hlt.promo.engine.model.Location;
-import hlt.promo.engine.repository.LocationRepository;
-import lombok.RequiredArgsConstructor;
-import org.springframework.stereotype.Service;
-
-import java.time.DateTimeException;
-import java.time.ZoneId;
-
-@Service
-@RequiredArgsConstructor
-public class TimeZoneService {
-
-    private final LocationRepository locationRepository;
-
-    public ZoneId getLocationZone(Integer locationId) {
-
-        Location location = locationRepository
-                .findById(locationId)
-                .orElseThrow(() ->
-                        new IllegalArgumentException(
-                                "Location not found: " + locationId));
-
-        String timeZone = location.getTimeZone();
-
-        if (timeZone == null || timeZone.isBlank()) {
-            throw new IllegalStateException(
-                    "Time zone is not configured for location: "
-                            + locationId);
-        }
-
-        try {
-            return ZoneId.of(timeZone);
-        } catch (DateTimeException ex) {
-            throw new IllegalStateException(
-                    "Invalid time zone configured for location "
-                            + locationId + ": " + timeZone,
-                    ex);
-        }
-    }
-}
-
-
-
-
-package hlt.promo.engine.service;
-
-import org.springframework.stereotype.Component;
-
-import java.time.Instant;
-import java.time.LocalDateTime;
-import java.time.ZoneId;
-import java.time.ZonedDateTime;
-
-@Component
-public class DateTimeConverter {
-
-    public Instant toUtc(
-            LocalDateTime localDateTime,
-            ZoneId zoneId) {
-
-        if (localDateTime == null) {
-            return null;
-        }
-
-        return localDateTime
-                .atZone(zoneId)
-                .toInstant();
-    }
-
-    public ZonedDateTime toLocal(
-            Instant utcDateTime,
-            ZoneId zoneId) {
-
-        if (utcDateTime == null) {
-            return null;
-        }
-
-        return utcDateTime.atZone(zoneId);
-    }
-}
 
 
 
 package hlt.promo.engine.service;
 
 import hlt.promo.engine.dto.CreateGeneralAdmissionRequest;
+import hlt.promo.engine.model.GeneralAdmission;
+import hlt.promo.engine.repository.GeneralAdmissionRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
@@ -150,6 +61,7 @@ public class GeneralAdmissionService {
 
     private final TimeZoneService timeZoneService;
     private final DateTimeConverter dateTimeConverter;
+    private final GeneralAdmissionRepository generalAdmissionRepository;
 
     public void create(CreateGeneralAdmissionRequest request) {
 
@@ -167,101 +79,38 @@ public class GeneralAdmissionService {
                         request.endDateTime(),
                         zoneId);
 
-        // Save startUtc and endUtc in DB
-        // using your existing GA repository/procedure
+        GeneralAdmission ga = new GeneralAdmission();
+        ga.setLocationId(request.locationId());
+        ga.setStartDateTimeUtc(startUtc);
+        ga.setEndDateTimeUtc(endUtc);
+
+        generalAdmissionRepository.save(ga);
     }
 }
-
-
-
-
-
-
-package hlt.promo.engine.dto;
-
-import java.time.LocalDateTime;
-
-public record CreateGeneralAdmissionRequest(
-        Integer locationId,
-        LocalDateTime startDateTime,
-        LocalDateTime endDateTime
-) {
-}
-
-
-
 
 
 package hlt.promo.engine.controller;
 
-import hlt.promo.engine.service.DateTimeConverter;
-import hlt.promo.engine.service.TimeZoneService;
+import hlt.promo.engine.dto.CreateGeneralAdmissionRequest;
+import hlt.promo.engine.service.GeneralAdmissionService;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
-import java.time.Instant;
-import java.time.LocalDateTime;
-import java.time.ZoneId;
-import java.time.ZonedDateTime;
-
 @RestController
-@RequestMapping("/test")
+@RequestMapping("/api/general-admission")
 @RequiredArgsConstructor
-public class TestTimeZoneController {
+public class GeneralAdmissionController {
 
-    private final TimeZoneService timeZoneService;
-    private final DateTimeConverter dateTimeConverter;
+    private final GeneralAdmissionService generalAdmissionService;
 
-    @GetMapping("/convert")
-    public String testConvert(
-            @RequestParam Integer locationId,
-            @RequestParam String localDateTime) {
+    @PostMapping
+    public ResponseEntity<String> create(
+            @RequestBody CreateGeneralAdmissionRequest request) {
 
-        ZoneId zoneId = timeZoneService.getLocationZone(locationId);
-        LocalDateTime ldt = LocalDateTime.parse(localDateTime);
-
-        Instant utc = dateTimeConverter.toUtc(ldt, zoneId);
-        ZonedDateTime backToLocal = dateTimeConverter.toLocal(utc, zoneId);
-
-        return "Zone: " + zoneId
-                + " | UTC: " + utc
-                + " | Back to local: " + backToLocal;
+        generalAdmissionService.create(request);
+        return ResponseEntity.ok("General admission created successfully");
     }
 }
 
 
-
-
-package hlt.promo.engine.config;
-
-import hlt.promo.engine.model.Location;
-import hlt.promo.engine.repository.LocationRepository;
-import lombok.RequiredArgsConstructor;
-import org.springframework.boot.CommandLineRunner;
-import org.springframework.stereotype.Component;
-
-@Component
-@RequiredArgsConstructor
-public class LocationSeeder implements CommandLineRunner {
-
-    private final LocationRepository locationRepository;
-
-    @Override
-    public void run(String... args) {
-        if (locationRepository.count() == 0) {
-            locationRepository.save(buildLocation("New York Store", "America/New_York"));
-            locationRepository.save(buildLocation("Chicago Store", "America/Chicago"));
-            locationRepository.save(buildLocation("Los Angeles Store", "America/Los_Angeles"));
-            locationRepository.save(buildLocation("Phoenix Store", "America/Phoenix"));
-            locationRepository.save(buildLocation("London Store", "Europe/London"));
-        }
-    }
-
-    private Location buildLocation(String name, String tz) {
-        Location loc = new Location();
-        loc.setLocationName(name);
-        loc.setRemoved(false);
-        loc.setTimeZone(tz);
-        return loc;
-    }
-}
