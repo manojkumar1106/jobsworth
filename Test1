@@ -1,116 +1,107 @@
-package hlt.promo.engine.model;
+package hlt.promo.engine.controller;
 
-import jakarta.persistence.*;
-import lombok.Getter;
-import lombok.Setter;
+import hlt.promo.engine.dto.AmenityResponse;
+import hlt.promo.engine.dto.CreateAmenityRequest;
+import hlt.promo.engine.service.AmenityService;
+import lombok.RequiredArgsConstructor;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
 
-import java.time.Instant;
+import java.util.List;
 
-@Entity
-@Table(name = "General_Admission", schema = "C1")
-@Getter
-@Setter
-public class GeneralAdmission {
+@RestController
+@RequestMapping("/api/amenity")
+@RequiredArgsConstructor
+public class AmenityController {
 
-    @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
-    @Column(name = "GA_Id")
-    private Integer gaId;
+    private final AmenityService amenityService;
 
-    @Column(name = "Location_Id", nullable = false)
-    private Integer locationId;
+    @PostMapping
+    public ResponseEntity<String> create(
+            @RequestBody CreateAmenityRequest request) {
 
-    @Column(name = "Start_Date_Time_Utc", nullable = false)
-    private Instant startDateTimeUtc;
+        amenityService.create(request);
+        return ResponseEntity.ok("Amenity created successfully");
+    }
 
-    @Column(name = "End_Date_Time_Utc", nullable = false)
-    private Instant endDateTimeUtc;
+    @GetMapping
+    public ResponseEntity<List<AmenityResponse>> getAll() {
+        return ResponseEntity.ok(amenityService.getAll());
+    }
 }
-
-
-
-
-package hlt.promo.engine.repository;
-
-import hlt.promo.engine.model.GeneralAdmission;
-import org.springframework.data.jpa.repository.JpaRepository;
-import org.springframework.stereotype.Repository;
-
-@Repository
-public interface GeneralAdmissionRepository extends JpaRepository<GeneralAdmission, Integer> {
-}
-
-
 
 
 
 package hlt.promo.engine.service;
 
-import hlt.promo.engine.dto.CreateGeneralAdmissionRequest;
-import hlt.promo.engine.model.GeneralAdmission;
-import hlt.promo.engine.repository.GeneralAdmissionRepository;
+import hlt.promo.engine.dto.AmenityResponse;
+import hlt.promo.engine.dto.CreateAmenityRequest;
+import hlt.promo.engine.model.Amenity;
+import hlt.promo.engine.repository.AmenityRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
-import java.time.Instant;
 import java.time.ZoneId;
+import java.time.ZonedDateTime;
+import java.util.List;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
-public class GeneralAdmissionService {
+public class AmenityService {
 
     private final TimeZoneService timeZoneService;
     private final DateTimeConverter dateTimeConverter;
-    private final GeneralAdmissionRepository generalAdmissionRepository;
+    private final AmenityRepository amenityRepository;
 
-    public void create(CreateGeneralAdmissionRequest request) {
+    public void create(CreateAmenityRequest request) {
+        // ... existing create logic unchanged
+    }
 
-        ZoneId zoneId =
-                timeZoneService.getLocationZone(
-                        request.locationId());
+    public List<AmenityResponse> getAll() {
 
-        Instant startUtc =
-                dateTimeConverter.toUtc(
-                        request.startDateTime(),
-                        zoneId);
+        List<Amenity> amenities = amenityRepository.findAll();
 
-        Instant endUtc =
-                dateTimeConverter.toUtc(
-                        request.endDateTime(),
-                        zoneId);
+        return amenities.stream()
+                .map(this::toResponse)
+                .collect(Collectors.toList());
+    }
 
-        GeneralAdmission ga = new GeneralAdmission();
-        ga.setLocationId(request.locationId());
-        ga.setStartDateTimeUtc(startUtc);
-        ga.setEndDateTimeUtc(endUtc);
+    private AmenityResponse toResponse(Amenity amenity) {
 
-        generalAdmissionRepository.save(ga);
+        ZoneId zoneId = timeZoneService.getLocationZone(amenity.getLocationId());
+
+        ZonedDateTime startLocal =
+                dateTimeConverter.toLocal(amenity.getStartDateTimeUtc(), zoneId);
+
+        ZonedDateTime endLocal =
+                dateTimeConverter.toLocal(amenity.getEndDateTimeUtc(), zoneId);
+
+        return new AmenityResponse(
+                amenity.getAmenityId(),
+                amenity.getAmenityName(),
+                amenity.getLocationId(),
+                zoneId.getId(),
+                startLocal,
+                endLocal
+        );
     }
 }
 
 
-package hlt.promo.engine.controller;
 
-import hlt.promo.engine.dto.CreateGeneralAdmissionRequest;
-import hlt.promo.engine.service.GeneralAdmissionService;
-import lombok.RequiredArgsConstructor;
-import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.*;
 
-@RestController
-@RequestMapping("/api/general-admission")
-@RequiredArgsConstructor
-public class GeneralAdmissionController {
+package hlt.promo.engine.dto;
 
-    private final GeneralAdmissionService generalAdmissionService;
+import java.time.ZonedDateTime;
 
-    @PostMapping
-    public ResponseEntity<String> create(
-            @RequestBody CreateGeneralAdmissionRequest request) {
-
-        generalAdmissionService.create(request);
-        return ResponseEntity.ok("General admission created successfully");
-    }
+public record AmenityResponse(
+        Integer amenityId,
+        String amenityName,
+        Integer locationId,
+        String timeZone,
+        ZonedDateTime startDateTimeLocal,
+        ZonedDateTime endDateTimeLocal
+) {
 }
-
 
