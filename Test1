@@ -1,428 +1,31 @@
-package com.hlt.api.service.serviceimpl;
+package hlt.promo.engine.model;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.hlt.api.dao.AdminDao;
-import com.hlt.api.dao.AuthDao;
-import com.hlt.api.dtos.request.SendEmailOtp;
-import com.hlt.api.dtos.request.TicketRequest;
-import com.hlt.api.dtos.request.VerifyEmailOtp;
-import com.hlt.api.dtos.response.CustomerProfileResponseDTO;
-import com.hlt.api.exception.BadRequestException;
-import com.hlt.api.service.IAdminService;
-import jakarta.mail.MessagingException;
-import jakarta.mail.internet.MimeMessage;
-import lombok.extern.slf4j.Slf4j;
-import org.apache.commons.lang3.StringUtils;
-import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.mail.javamail.JavaMailSender;
-import org.springframework.mail.javamail.MimeMessageHelper;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
-import software.amazon.awssdk.services.cognitoidentityprovider.CognitoIdentityProviderClient;
-import software.amazon.awssdk.services.cognitoidentityprovider.model.*;
+import jakarta.persistence.*;
+import lombok.Getter;
+import lombok.Setter;
 
-import javax.crypto.Mac;
-import javax.crypto.spec.SecretKeySpec;
-import java.nio.charset.StandardCharsets;
-import java.security.SecureRandom;
-import java.util.*;
+@Entity
+@Table(name = "Location", schema = "C1")
+@Getter
+@Setter
+public class Location {
 
-@Slf4j
-@Service
-public class OtpAuthService {
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    @Column(name = "Location_Id")
+    private Integer locationId;
 
-    private final JavaMailSender mailSender;
-    private final CognitoIdentityProviderClient cognitoClient;
-    private final IAdminService adminService;
-    private final AuthDao authDao;
-    private final AdminDao adminDao;
+    @Column(name = "Location_Name", nullable = false)
+    private String locationName;
 
-    private final SecureRandom secureRandom = new SecureRandom();
+    @Column(name = "Parent_Location_Id")
+    private Integer parentLocationId;
 
-    @Value("${cognito.user-pool-id}")
-    private String userPoolId;
+    @Column(name = "Is_Removed")
+    private Boolean removed;
 
-    @Value("${cognito.client-id}")
-    private String clientId;
-
-    @Value("${cognito.client-secret}")
-    private String clientSecret;
-
-    @Value("${cognito.hosted-ui-url}")
-    private String hostedUiUrl;
-
-    @Value("${cognito.admin-client-id}")
-    private String adminClientId;
-
-    @Value("${cognito.redirect-uri}")
-    private String redirectUri;
-
-    @Value("${spring.mail.fromEmail}")
-    private String fromMail;
-
-    public OtpAuthService(
-            JavaMailSender mailSender,
-            @Qualifier("customerCognitoClient") CognitoIdentityProviderClient cognitoClient,
-            IAdminService adminService,
-            AuthDao authDao,
-            AdminDao adminDao
-    ) {
-        this.mailSender = mailSender;
-        this.cognitoClient = cognitoClient;
-        this.adminService = adminService;
-        this.authDao = authDao;
-        this.adminDao = adminDao;
-    }
-
-    /*
-     * ===============================================================
-     * STEP 1: INITIATE OTP (Cognito CUSTOM_AUTH, tenantId mandatory)
-     * ===============================================================
-     */
-    public Map<String, Object> initiateOtpAuth(SendEmailOtp request, String tenantId) {
-
-        validateEmail(request.getEmail());
-        if (tenantId == null || tenantId.isBlank()) {
-            throw new BadRequestException("x-tenant-id header is required");
-        }
-        String email = request.getEmail().trim().toLowerCase();
-
-        ensureCognitoIdentityExistsAndTenantMatches(email, tenantId);
-
-        String secretHash = calculateSecretHash(email);
-        Map<String, String> authParams = new HashMap<>();
-        authParams.put("USERNAME", email);
-        authParams.put("SECRET_HASH", secretHash);
-
-        try {
-            log.info("Initiating CUSTOM_AUTH flow for {}", sanitizeForLog(email));
-
-            AdminInitiateAuthResponse response = cognitoClient.adminInitiateAuth(
-                    AdminInitiateAuthRequest.builder()
-                            .userPoolId(userPoolId)
-                            .clientId(clientId)
-                            .authFlow(AuthFlowType.CUSTOM_AUTH)
-                            .authParameters(authParams)
-                            .clientMetadata(Map.of("tenantId", tenantId))
-                            .build()
-            );
-
-            if (response.challengeName() != null) {
-                return Map.of(
-                        "challengeName", response.challengeNameAsString(),
-                        "session", response.session(),
-                        "userName", email
-                );
-            }
-
-            throw new BadRequestException("AWS did not return an OTP session");
-
-        } catch (BadRequestException ex) {
-            throw ex;
-        } catch (Exception ex) {
-            log.error("Failed to initiate OTP for {}", sanitizeForLog(email), ex);
-            throw new BadRequestException("Failed to initiate OTP: " + ex.getMessage());
-        }
-    }
-
-    /*
-     * ===============================================================
-     * STEP 2: VERIFY OTP + LOGIN + SESSION START
-     * ===============================================================
-     */
-    @Transactional
-    public Map<String, Object> verifyOtpAndLogin(VerifyEmailOtp request, String tenantId) {
-
-        validateVerifyRequest(request);
-        if (tenantId == null || tenantId.isBlank()) {
-            throw new BadRequestException("x-tenant-id header is required");
-        }
-
-        String email = request.getEmail().trim().toLowerCase();
-        String otp = request.getOtp().trim();
-        String session = request.getSession();
-        String secretHash = calculateSecretHash(email);
-
-        Map<String, String> challengeResponses = new HashMap<>();
-        challengeResponses.put("USERNAME", email);
-        challengeResponses.put("ANSWER", otp);
-        challengeResponses.put("SECRET_HASH", secretHash);
-
-        AdminRespondToAuthChallengeResponse response;
-        try {
-            response = cognitoClient.adminRespondToAuthChallenge(
-                    AdminRespondToAuthChallengeRequest.builder()
-                            .userPoolId(userPoolId)
-                            .clientId(clientId)
-                            .challengeName(ChallengeNameType.CUSTOM_CHALLENGE)
-                            .session(session)
-                            .challengeResponses(challengeResponses)
-                            .clientMetadata(Map.of("tenantId", tenantId))
-                            .build()
-            );
-        } catch (Exception ex) {
-            log.error("OTP verification failed for {}", sanitizeForLog(email), ex);
-            throw new IllegalArgumentException("Invalid or expired OTP");
-        }
-
-        if (response.authenticationResult() == null) {
-            throw new IllegalArgumentException("Invalid or expired OTP");
-        }
-
-        AuthenticationResultType authResult = response.authenticationResult();
-
-        cognitoClient.adminUpdateUserAttributes(
-                AdminUpdateUserAttributesRequest.builder()
-                        .userPoolId(userPoolId)
-                        .username(email)
-                        .userAttributes(
-                                AttributeType.builder().name("email_verified").value("true").build()
-                        )
-                        .build()
-        );
-
-        AdminGetUserResponse userResponse = cognitoClient.adminGetUser(
-                AdminGetUserRequest.builder().userPoolId(userPoolId).username(email).build()
-        );
-        String tenantAttr = getTenantAttribute(userResponse)
-                .orElseThrow(() -> new BadRequestException("Tenant attribute missing for customer"));
-
-        if (!tenantAttr.equalsIgnoreCase(tenantId)) {
-            throw new BadRequestException("Customer is not registered for tenant: " + tenantId);
-        }
-
-        String jwtSessionKey = extractStableSessionKey(authResult.accessToken());
-
-        boolean isNewUser = isNewCustomer(jwtSessionKey);
-
-        String sessionKey = null;
-        if (isNewUser) {
-            sessionKey = UUID.randomUUID().toString();
-            authDao.startGuestSession(sessionKey, "CUSTOMER_GUEST");
-
-            TicketRequest upsertRequest = new TicketRequest();
-            upsertRequest.setType("CUSTOMER");
-            upsertRequest.setSessionKey(sessionKey);
-            upsertRequest.setCognitoUserId(userResponse.username());
-            upsertRequest.setEmail(email);
-            upsertRequest.setPhone(null);
-            upsertRequest.setFirstName(null);
-            upsertRequest.setLastName(null);
-            upsertRequest.setDateOfBirth(null);
-
-            adminService.upsertUser(upsertRequest);
-        }
-
-        authDao.startClientCustomerSession(
-                userResponse.username(), jwtSessionKey, "CUSTOMER_LOGIN", sessionKey
-        );
-
-        boolean isProfileComplete = checkProfileCompletion(jwtSessionKey);
-
-        return Map.of(
-                "status", "SUCCESS",
-                "accessToken", authResult.accessToken(),
-                "idToken", authResult.idToken(),
-                "tokenType", authResult.tokenType(),
-                "sessionKey", jwtSessionKey,
-                "cognitoUserId", userResponse.username(),
-                "isNewUser", isNewUser,
-                "isProfileComplete", isProfileComplete
-        );
-    }
-
-    /*
-     * ===============================================================
-     * ENSURE COGNITO IDENTITY EXISTS + TENANT MATCHES (fail fast)
-     * ===============================================================
-     */
-    private void ensureCognitoIdentityExistsAndTenantMatches(String email, String tenantId) {
-        try {
-            AdminGetUserResponse existing = cognitoClient.adminGetUser(
-                    AdminGetUserRequest.builder().userPoolId(userPoolId).username(email).build()
-            );
-
-            String existingTenant = getTenantAttribute(existing)
-                    .orElseThrow(() -> new BadRequestException("Tenant attribute missing for customer"));
-
-            if (!existingTenant.equalsIgnoreCase(tenantId)) {
-                throw new BadRequestException("Customer is not registered for tenant: " + tenantId);
-            }
-
-            log.info("Existing Cognito user {} matches tenant {}, proceeding to CUSTOM_AUTH",
-                    sanitizeForLog(email), tenantId);
-
-        } catch (UserNotFoundException ex) {
-            log.info("First-time user {}, creating minimal Cognito stub for tenant {}",
-                    sanitizeForLog(email), tenantId);
-            cognitoClient.adminCreateUser(
-                    AdminCreateUserRequest.builder()
-                            .userPoolId(userPoolId)
-                            .username(email)
-                            .userAttributes(
-                                    AttributeType.builder().name("email").value(email).build(),
-                                    AttributeType.builder().name("email_verified").value("false").build(),
-                                    AttributeType.builder().name("custom:ActiveTenantId").value(tenantId).build()
-                            )
-                            .messageAction(MessageActionType.SUPPRESS)
-                            .build()
-            );
-        }
-    }
-
-    private Optional<String> getTenantAttribute(AdminGetUserResponse response) {
-        return response.userAttributes().stream()
-                .filter(a -> "custom:ActiveTenantId".equalsIgnoreCase(a.name()))
-                .map(AttributeType::value)
-                .findFirst();
-    }
-
-    /*
-     * ===============================================================
-     * SESSION KEY / PROFILE HELPERS
-     * ===============================================================
-     */
-    private String extractStableSessionKey(String accessToken) {
-        try {
-            String payload = accessToken.split("\\.")[1];
-            String decoded = new String(Base64.getUrlDecoder().decode(payload), StandardCharsets.UTF_8);
-            ObjectMapper mapper = new ObjectMapper();
-            Map<?, ?> claims = mapper.readValue(decoded, Map.class);
-            Object originJti = claims.get("origin_jti");
-            if (originJti != null) return originJti.toString();
-            return claims.get("jti").toString();
-        } catch (Exception ex) {
-            log.warn("Could not extract origin_jti, fallback to UUID");
-            return UUID.randomUUID().toString();
-        }
-    }
-
-    private boolean isNewCustomer(String sessionKey) {
-        CustomerProfileResponseDTO customerProfile = adminDao.getCustomerProfile(sessionKey);
-        return customerProfile == null || customerProfile.getCustomerProfileDTO() == null;
-    }
-
-    private boolean checkProfileCompletion(String sessionKey) {
-        CustomerProfileResponseDTO customerProfile = adminDao.getCustomerProfile(sessionKey);
-        if (customerProfile == null || customerProfile.getCustomerProfileDTO() == null) return false;
-        return StringUtils.isNotBlank(customerProfile.getCustomerProfileDTO().getFirstName())
-                && StringUtils.isNotBlank(customerProfile.getCustomerProfileDTO().getLastName());
-    }
-
-    /*
-     * ===============================================================
-     * OTP GENERATION (KEPT — used by CognitoAdminService for temp passwords)
-     * ===============================================================
-     */
-    public String generateOtp() {
-        String upper = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
-        String lower = "abcdefghijklmnopqrstuvwxyz";
-        String digits = "0123456789";
-        String special = "!@#$%";
-        String all = upper + lower + digits + special;
-
-        StringBuilder otp = new StringBuilder();
-        otp.append(upper.charAt(secureRandom.nextInt(upper.length())));
-        otp.append(lower.charAt(secureRandom.nextInt(lower.length())));
-        otp.append(digits.charAt(secureRandom.nextInt(digits.length())));
-        otp.append(special.charAt(secureRandom.nextInt(special.length())));
-
-        for (int i = 0; i < 4; i++) {
-            otp.append(all.charAt(secureRandom.nextInt(all.length())));
-        }
-
-        List<Character> chars = new ArrayList<>();
-        for (char c : otp.toString().toCharArray()) {
-            chars.add(c);
-        }
-        Collections.shuffle(chars, secureRandom);
-
-        StringBuilder finalOtp = new StringBuilder();
-        for (char c : chars) {
-            finalOtp.append(c);
-        }
-        return finalOtp.toString();
-    }
-
-    /*
-     * ===============================================================
-     * EMAIL (KEPT — used by CognitoAdminService for temp password welcome email)
-     * ===============================================================
-     */
-    public void sendEmail(String toEmail, String otp, String tempPassword) {
-        String subject = "Your Login OTP";
-        String bodyHtml;
-        if (tempPassword != null && !tempPassword.isEmpty()) {
-            subject = "Welcome - Your Account Details";
-            String loginLink = hostedUiUrl + "?client_id=" + adminClientId + "&response_type=code"
-                    + "&scope=email+openid+phone" + "&redirect_uri=" + redirectUri;
-            bodyHtml = "<html><body>"
-                    + "<h3>Welcome to Our Platform!</h3>"
-                    + "<p>Your account has been created by an admin.<p>"
-                    + "<p><b>Username:</b> " + toEmail + "</p>"
-                    + "<p><b>Temporary Password:</b> " + tempPassword + "</p>"
-                    + "<p>Please click the link below to login and set your new password:</p>"
-                    + "<a href='" + loginLink + "' "
-                    + "style='background:#007bff;color:white;padding:10px 20px;"
-                    + "text-decoration:none;border-radius:5px;'>Login Here</a>"
-                    + "<br><br><p>This temporary password will expire after first use.</p>"
-                    + "</body></html>";
-        } else {
-            bodyHtml = "<html><body><h3>Your Login OTP</h3><p>Your One-Time Password (OTP) for login is: <b>"
-                    + otp + "</b></p><p>This OTP will expire in 5 minutes.</p></body></html>";
-        }
-        try {
-            MimeMessage message = mailSender.createMimeMessage();
-            MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
-            helper.setFrom(fromMail);
-            helper.setTo(toEmail);
-            helper.setSubject(subject);
-            helper.setText(bodyHtml, true);
-            mailSender.send(message);
-        } catch (MessagingException e) {
-            log.error("Failed to send email to {}", toEmail, e);
-            throw new RuntimeException("Failed to send email", e);
-        }
-    }
-
-    private String calculateSecretHash(String username) {
-        try {
-            String message = username + clientId;
-            SecretKeySpec signingKey = new SecretKeySpec(
-                    clientSecret.getBytes(StandardCharsets.UTF_8), "HmacSHA256"
-            );
-            Mac mac = Mac.getInstance("HmacSHA256");
-            mac.init(signingKey);
-            byte[] rawHmac = mac.doFinal(message.getBytes(StandardCharsets.UTF_8));
-            return Base64.getEncoder().encodeToString(rawHmac);
-        } catch (Exception ex) {
-            throw new RuntimeException("Error calculating secret hash", ex);
-        }
-    }
-
-    private void validateEmail(String email) {
-        if (email == null || email.isBlank()) {
-            throw new IllegalArgumentException("Email required");
-        }
-        if (!email.matches("^[\\w.-]+@[\\w.-]+\\.[a-zA-Z]{2,}$")) {
-            throw new IllegalArgumentException("Invalid email");
-        }
-    }
-
-    private void validateVerifyRequest(VerifyEmailOtp request) {
-        validateEmail(request.getEmail());
-        if (request.getOtp() == null || request.getOtp().isBlank()) {
-            throw new IllegalArgumentException("OTP required");
-        }
-        if (request.getSession() == null || request.getSession().isBlank()) {
-            throw new IllegalArgumentException("Session required");
-        }
-    }
-
-    private String sanitizeForLog(String value) {
-        return value == null ? "null" : value.replaceAll("[\r\n\t]", "_");
-    }
+    @Column(name = "Time_Zone", length = 100)
+    private String timeZone;
 }
 
 
@@ -432,142 +35,233 @@ public class OtpAuthService {
 
 
 
-package com.hlt.api.controller;
 
-import com.hlt.api.dtos.request.SendEmailOtp;
-import com.hlt.api.dtos.request.VerifyEmailOtp;
-import com.hlt.api.service.serviceimpl.OtpAuthService;
+package hlt.promo.engine.repository;
+
+import hlt.promo.engine.model.Location;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.stereotype.Repository;
+
+@Repository
+public interface LocationRepository extends JpaRepository<Location, Integer> {
+}
+
+
+
+
+
+package hlt.promo.engine.service;
+
+import hlt.promo.engine.model.Location;
+import hlt.promo.engine.repository.LocationRepository;
+import lombok.RequiredArgsConstructor;
+import org.springframework.stereotype.Service;
+
+import java.time.DateTimeException;
+import java.time.ZoneId;
+
+@Service
+@RequiredArgsConstructor
+public class TimeZoneService {
+
+    private final LocationRepository locationRepository;
+
+    public ZoneId getLocationZone(Integer locationId) {
+
+        Location location = locationRepository
+                .findById(locationId)
+                .orElseThrow(() ->
+                        new IllegalArgumentException(
+                                "Location not found: " + locationId));
+
+        String timeZone = location.getTimeZone();
+
+        if (timeZone == null || timeZone.isBlank()) {
+            throw new IllegalStateException(
+                    "Time zone is not configured for location: "
+                            + locationId);
+        }
+
+        try {
+            return ZoneId.of(timeZone);
+        } catch (DateTimeException ex) {
+            throw new IllegalStateException(
+                    "Invalid time zone configured for location "
+                            + locationId + ": " + timeZone,
+                    ex);
+        }
+    }
+}
+
+
+
+
+package hlt.promo.engine.service;
+
+import org.springframework.stereotype.Component;
+
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.time.ZonedDateTime;
+
+@Component
+public class DateTimeConverter {
+
+    public Instant toUtc(
+            LocalDateTime localDateTime,
+            ZoneId zoneId) {
+
+        if (localDateTime == null) {
+            return null;
+        }
+
+        return localDateTime
+                .atZone(zoneId)
+                .toInstant();
+    }
+
+    public ZonedDateTime toLocal(
+            Instant utcDateTime,
+            ZoneId zoneId) {
+
+        if (utcDateTime == null) {
+            return null;
+        }
+
+        return utcDateTime.atZone(zoneId);
+    }
+}
+
+
+
+package hlt.promo.engine.service;
+
+import hlt.promo.engine.dto.CreateGeneralAdmissionRequest;
+import lombok.RequiredArgsConstructor;
+import org.springframework.stereotype.Service;
+
+import java.time.Instant;
+import java.time.ZoneId;
+
+@Service
+@RequiredArgsConstructor
+public class GeneralAdmissionService {
+
+    private final TimeZoneService timeZoneService;
+    private final DateTimeConverter dateTimeConverter;
+
+    public void create(CreateGeneralAdmissionRequest request) {
+
+        ZoneId zoneId =
+                timeZoneService.getLocationZone(
+                        request.locationId());
+
+        Instant startUtc =
+                dateTimeConverter.toUtc(
+                        request.startDateTime(),
+                        zoneId);
+
+        Instant endUtc =
+                dateTimeConverter.toUtc(
+                        request.endDateTime(),
+                        zoneId);
+
+        // Save startUtc and endUtc in DB
+        // using your existing GA repository/procedure
+    }
+}
+
+
+
+
+
+
+package hlt.promo.engine.dto;
+
+import java.time.LocalDateTime;
+
+public record CreateGeneralAdmissionRequest(
+        Integer locationId,
+        LocalDateTime startDateTime,
+        LocalDateTime endDateTime
+) {
+}
+
+
+
+
+
+package hlt.promo.engine.controller;
+
+import hlt.promo.engine.service.DateTimeConverter;
+import hlt.promo.engine.service.TimeZoneService;
+import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 
-import java.util.Map;
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.time.ZonedDateTime;
 
 @RestController
-@RequestMapping("/public/auth")
-public class PublicAuthController {
+@RequestMapping("/test")
+@RequiredArgsConstructor
+public class TestTimeZoneController {
 
-    private final OtpAuthService otpAuthService;
+    private final TimeZoneService timeZoneService;
+    private final DateTimeConverter dateTimeConverter;
 
-    public PublicAuthController(OtpAuthService otpAuthService) {
-        this.otpAuthService = otpAuthService;
-    }
+    @GetMapping("/convert")
+    public String testConvert(
+            @RequestParam Integer locationId,
+            @RequestParam String localDateTime) {
 
-    @PostMapping("/send-otp")
-    public Map<String, Object> sendOtp(
-            @RequestBody SendEmailOtp emailOtp,
-            @RequestHeader("x-tenant-id") String tenantName) {
-        return otpAuthService.initiateOtpAuth(emailOtp, tenantName);
-    }
+        ZoneId zoneId = timeZoneService.getLocationZone(locationId);
+        LocalDateTime ldt = LocalDateTime.parse(localDateTime);
 
-    @PostMapping("/verify-otp")
-    public Map<String, Object> verifyOtp(
-            @RequestBody VerifyEmailOtp verifyEmailOtp,
-            @RequestHeader("x-tenant-id") String tenantName) {
-        return otpAuthService.verifyOtpAndLogin(verifyEmailOtp, tenantName);
+        Instant utc = dateTimeConverter.toUtc(ldt, zoneId);
+        ZonedDateTime backToLocal = dateTimeConverter.toLocal(utc, zoneId);
+
+        return "Zone: " + zoneId
+                + " | UTC: " + utc
+                + " | Back to local: " + backToLocal;
     }
 }
 
 
 
 
+package hlt.promo.engine.config;
 
+import hlt.promo.engine.model.Location;
+import hlt.promo.engine.repository.LocationRepository;
+import lombok.RequiredArgsConstructor;
+import org.springframework.boot.CommandLineRunner;
+import org.springframework.stereotype.Component;
 
-private final Cache<String, Boolean> newUserCache = Caffeine.newBuilder()
-        .expireAfterWrite(Duration.ofMinutes(5))
-        .maximumSize(100_000)
-        .build();
+@Component
+@RequiredArgsConstructor
+public class LocationSeeder implements CommandLineRunner {
 
+    private final LocationRepository locationRepository;
 
-
-        boolean isNewUser = ensureCognitoIdentityExistsAndTenantMatches(email, tenantId);
-        newUserCache.put(email, isNewUser);
-
-
-
-            log.info("Existing Cognito user {} matches tenant {}, proceeding to CUSTOM_AUTH",
-                    sanitizeForLog(email), tenantId);
-            return false;
-
-        } catch (UserNotFoundException ex) {
-
-
-
-
-
-                            .messageAction(MessageActionType.SUPPRESS)
-                            .build()
-            );
-            return true;
+    @Override
+    public void run(String... args) {
+        if (locationRepository.count() == 0) {
+            locationRepository.save(buildLocation("New York Store", "America/New_York"));
+            locationRepository.save(buildLocation("Chicago Store", "America/Chicago"));
+            locationRepository.save(buildLocation("Los Angeles Store", "America/Los_Angeles"));
+            locationRepository.save(buildLocation("Phoenix Store", "America/Phoenix"));
+            locationRepository.save(buildLocation("London Store", "Europe/London"));
         }
     }
 
-
-
-
-
-        Boolean cachedIsNewUser = newUserCache.getIfPresent(email);
-        newUserCache.invalidate(email);
-
-        AdminGetUserResponse userResponse = cognitoClient.adminGetUser(
-                AdminGetUserRequest.builder().userPoolId(userPoolId).username(email).build()
-        );
-
-        boolean isNewUser = cachedIsNewUser != null
-                ? cachedIsNewUser
-                : userResponse.userAttributes().stream()
-                        .filter(a -> "email_verified".equalsIgnoreCase(a.name()))
-                        .map(AttributeType::value)
-                        .findFirst()
-                        .map(v -> "false".equalsIgnoreCase(v))
-                        .orElse(false);
-
-        String tenantAttr = getTenantAttribute(userResponse)
-                .orElseThrow(() -> new BadRequestException("Tenant attribute missing for customer"));
-        if (!tenantAttr.equalsIgnoreCase(tenantId)) {
-            throw new BadRequestException("Customer is not registered for tenant: " + tenantId);
-        }
-
-        cognitoClient.adminUpdateUserAttributes(
-                AdminUpdateUserAttributesRequest.builder()
-                        .userPoolId(userPoolId)
-                        .username(email)
-                        .userAttributes(
-                                AttributeType.builder().name("email_verified").value("true").build()
-                        )
-                        .build()
-        );
-
-        String jwtSessionKey = extractStableSessionKey(authResult.accessToken());
-
-
-
-
-export const handler = async (event) => {
-  console.log(`Event: ${JSON.stringify(event)}`);
-  const session = event.request.session || [];
-
-  if (session.length === 0) {
-    // First attempt - issue challenge
-    event.response.challengeName = "CUSTOM_CHALLENGE";
-    event.response.issueTokens = false;
-    event.response.failAuthentication = false;
-
-  } else if (session[session.length - 1].challengeResult === true) {
-    // Correct OTP - success
-    event.response.issueTokens = true;
-    event.response.failAuthentication = false;
-
-  } else if (session.length < 3) {
-    // Wrong OTP, but retries remain - issue challenge again
-    event.response.challengeName = "CUSTOM_CHALLENGE";
-    event.response.issueTokens = false;
-    event.response.failAuthentication = false;
-
-  } else {
-    // 3 failed attempts - fail authentication
-    event.response.issueTokens = false;
-    event.response.failAuthentication = true;
-  }
-
-  return event;
-};
-
+    private Location buildLocation(String name, String tz) {
+        Location loc = new Location();
+        loc.setLocationName(name);
+        loc.setRemoved(false);
+        loc.setTimeZone(tz);
+        return loc;
+    }
+}
