@@ -12,3 +12,74 @@ CREATE TABLE IF NOT EXISTS client1.Rule_Definitions (
     PRIMARY KEY (Rule_Definition_Id),
     KEY idx_rule_type_reference (Rule_Type, Reference_Id, Is_Active)
 );
+
+
+
+CREATE TABLE IF NOT EXISTS client1.Rule_History (
+    Rule_History_Id  BIGINT NOT NULL AUTO_INCREMENT,
+    Rule_Name         VARCHAR(255) NOT NULL,
+    Rule_Type          VARCHAR(255) NOT NULL,
+    Reference_Id        BIGINT NOT NULL,
+    DRL_Content          LONGTEXT,
+    Version               INT,
+    Action_Taken           VARCHAR(255),
+    Changed_By              VARCHAR(255),
+    Changed_At               DATETIME,
+    PRIMARY KEY (Rule_History_Id),
+    KEY idx_rule_history_lookup (Rule_Name, Version)
+);
+
+
+
+
+
+
+-- ============================================
+-- RULE DEFINITIONS
+-- ============================================
+CREATE TABLE IF NOT EXISTS client1.Rule_Definitions (
+    Rule_Definition_Id  BIGINT NOT NULL AUTO_INCREMENT,
+    Rule_Name             VARCHAR(255) NOT NULL,
+    Rule_Type               VARCHAR(255) NOT NULL,
+    Reference_Id               BIGINT NOT NULL,
+    DRL_Content                  LONGTEXT,
+    Version                        INT DEFAULT 1,
+    Is_Active                        BIT NOT NULL DEFAULT 1,
+    Created_By                         VARCHAR(255),
+    Created_At                           DATETIME,
+    Updated_At                             DATETIME,
+    PRIMARY KEY (Rule_Definition_Id),
+    KEY idx_rule_type_reference (Rule_Type, Reference_Id, Is_Active)
+);
+
+-- ============================================
+-- RULE HISTORY
+-- ============================================
+CREATE TABLE IF NOT EXISTS client1.Rule_History (
+    Rule_History_Id  BIGINT NOT NULL AUTO_INCREMENT,
+    Rule_Name          VARCHAR(255) NOT NULL,
+    Rule_Type            VARCHAR(255) NOT NULL,
+    Reference_Id            BIGINT NOT NULL,
+    DRL_Content                LONGTEXT,
+    Version                      INT,
+    Action_Taken                   VARCHAR(255),
+    Changed_By                       VARCHAR(255),
+    Changed_At                         DATETIME,
+    PRIMARY KEY (Rule_History_Id),
+    KEY idx_rule_history_lookup (Rule_Name, Version)
+);
+
+-- ============================================
+-- PROMO USAGE
+-- ============================================
+CREATE TABLE IF NOT EXISTS client1.Promo_Usage (
+    Promo_Usage_Id  INT NOT NULL AUTO_INCREMENT,
+    Promo_Code        VARCHAR(255) NOT NULL,
+    Customer_Id          VARCHAR(255) NOT NULL,
+    Usage_Count            INT DEFAULT 0,
+    First_Used_At             DATETIME,
+    Last_Used_At                DATETIME,
+    PRIMARY KEY (Promo_Usage_Id),
+    UNIQUE KEY uq_promo_customer (Promo_Code, Customer_Id)
+);
+
