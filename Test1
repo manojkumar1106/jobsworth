@@ -105,3 +105,185 @@ public record AmenityResponse(
 ) {
 }
 
+
+
+
+@Configuration
+public class RedisConfig {
+
+    @Value("${spring.data.redis.username}")
+    private String redisUsername;
+
+    @Bean
+    public LettuceConnectionFactory redisConnectionFactory() {
+        
+        String iamToken = generateIamToken();
+        
+        // Use RedisURI directly — like Carl's example!
+        RedisURI redisURI = RedisURI.builder()
+            .withHost("snd-ticketing-valkey-x4ubek.serverless.use1.cache.amazonaws.com")
+            .withPort(6379)
+            .withSsl(true)
+            .withAuthentication(redisUsername, iamToken.toCharArray())
+            .build();
+
+        LettuceClientConfiguration clientConfig = LettuceClientConfiguration
+            .builder()
+            .useSsl()
+            .build();
+
+        RedisStandaloneConfiguration redisConfig = 
+            new RedisStandaloneConfiguration();
+        redisConfig.setHostName(redisURI.getHost());
+        redisConfig.setPort(redisURI.getPort());
+        redisConfig.setUsername(redisUsername);
+        redisConfig.setPassword(RedisPassword.of(iamToken));
+
+        return new LettuceConnectionFactory(redisConfig, clientConfig);
+    }
+
+    private String generateIamToken() {
+        return ElastiCacheAuthTokenGenerator.builder()
+            .region(Region.US_EAST_1)
+            .credentialsProvider(DefaultCredentialsProvider.create())
+            .build()
+            .generateAuthToken(
+                GenerateAuthTokenRequest.builder()
+                    .replicationGroupId("snd-ticketing-valkey-x4ubek")
+                    .userName(redisUsername)
+                    .build()
+            );
+    }
+
+
+
+CREATE DEFINER=`snd-tkts-bi-v1-AnywhereRole`@`%` PROCEDURE `usp_Upsert_Promotion`(
+    IN p_Session_Key VARCHAR(36),
+    IN p_Promotion_Id BIGINT,
+    IN p_Location_Id INT,
+    IN p_Redemption_Method VARCHAR(20),
+    IN p_Promo_Code VARCHAR(100),
+    IN p_Display_Message VARCHAR(255),
+    IN p_Discount_Type VARCHAR(20),
+    IN p_Amount DECIMAL(10,2),
+    IN p_Stackable TINYINT(1),
+    IN p_Priority INT,
+    IN p_Apply_Full_Cart TINYINT(1),
+    IN p_Category VARCHAR(100),
+    IN p_Ticket_Type VARCHAR(100),
+    IN p_Selection_Group VARCHAR(100),
+    IN p_Max_Selectable_Per_Group INT,
+    IN p_Stack_Group VARCHAR(100),
+    IN p_Start_Date DATETIME,
+    IN p_End_Date DATETIME,
+    IN p_Channel_Web TINYINT(1),
+    IN p_Channel_POS TINYINT(1),
+    IN p_User_Type VARCHAR(20),
+    IN p_Promo_Status VARCHAR(20),
+    IN p_Usage_Limit INT,
+    IN p_Max_Usage_Per_Customer INT,
+    IN p_Updated_By VARCHAR(100),
+    OUT p_Result_Code INT
+)
+BEGIN
+    DECLARE Log_Details VARCHAR(4000) DEFAULT '';
+    SET p_Result_Code = -1;
+
+    TRY_PROC: BEGIN
+        DECLARE EXIT HANDLER FOR SQLEXCEPTION BEGIN GET DIAGNOSTICS CONDITION 1 Log_Details = message_text; ROLLBACK; END;
+
+        SET p_Result_Code = -2;
+        CALL client1.sys_Validate_Session(p_Session_Key, @Valid);
+        IF @Valid = FALSE THEN LEAVE TRY_PROC; END IF;
+
+        SET p_Result_Code = -4;
+        SET p_Promo_Code       = NULLIF(TRIM(p_Promo_Code), '');
+        SET p_Display_Message  = NULLIF(TRIM(p_Display_Message), '');
+        SET p_Redemption_Method = NULLIF(TRIM(p_Redemption_Method), '');
+        SET p_Discount_Type    = NULLIF(TRIM(p_Discount_Type), '');
+        SET p_Category         = NULLIF(TRIM(p_Category), '');
+        SET p_Ticket_Type      = NULLIF(TRIM(p_Ticket_Type), '');
+        SET p_Selection_Group  = NULLIF(TRIM(p_Selection_Group), '');
+        SET p_Stack_Group      = NULLIF(TRIM(p_Stack_Group), '');
+        SET p_User_Type        = NULLIF(TRIM(p_User_Type), '');
+        SET p_Promo_Status     = NULLIF(TRIM(p_Promo_Status), '');
+        SET p_Updated_By       = NULLIF(TRIM(p_Updated_By), '');
+
+        SET p_Result_Code = -1;
+
+        IF p_Location_Id IS NULL THEN SET Log_Details = 'p_Location_Id'; LEAVE TRY_PROC; END IF;
+        IF NOT EXISTS (SELECT 1 FROM C1.Location WHERE Location_Id = p_Location_Id) THEN
+            SET Log_Details = 'p_Location_Id_not_found'; LEAVE TRY_PROC;
+        END IF;
+        IF p_Redemption_Method IS NULL THEN SET Log_Details = 'p_Redemption_Method'; LEAVE TRY_PROC; END IF;
+        IF p_Discount_Type IS NULL THEN SET Log_Details = 'p_Discount_Type'; LEAVE TRY_PROC; END IF;
+        IF p_Amount IS NULL OR p_Amount <= 0 THEN SET Log_Details = 'p_Amount'; LEAVE TRY_PROC; END IF;
+        IF p_Redemption_Method = 'PROMO_CODE' AND p_Promo_Code IS NULL THEN
+            SET Log_Details = 'p_Promo_Code'; LEAVE TRY_PROC;
+        END IF;
+        IF p_Start_Date IS NOT NULL AND p_End_Date IS NOT NULL AND p_End_Date <= p_Start_Date THEN
+            SET Log_Details = 'p_End_Date'; LEAVE TRY_PROC;
+        END IF;
+
+        -- convert location-local start/end into UTC before persisting
+        SET @tz = (SELECT Time_Zone FROM C1.Location WHERE Location_Id = p_Location_Id);
+        SET @Start_Date_Utc = CONVERT_TZ(p_Start_Date, @tz, 'UTC');
+        SET @End_Date_Utc   = CONVERT_TZ(p_End_Date, @tz, 'UTC');
+
+        IF p_Promotion_Id IS NOT NULL AND EXISTS
+        (
+            SELECT 1
+            FROM client1.Promotion
+            WHERE Promotion_Id = p_Promotion_Id
+            LIMIT 1
+        )
+        THEN
+            UPDATE client1.Promotion
+            SET Redemption_Method          = COALESCE(p_Redemption_Method, Redemption_Method),
+                Promo_Code                 = p_Promo_Code,
+                Display_Message            = COALESCE(p_Display_Message, Display_Message),
+                Discount_Type              = COALESCE(p_Discount_Type, Discount_Type),
+                Amount                     = COALESCE(p_Amount, Amount),
+                Stackable                  = COALESCE(p_Stackable, Stackable),
+                Priority                   = COALESCE(p_Priority, Priority),
+                Apply_Full_Cart             = COALESCE(p_Apply_Full_Cart, Apply_Full_Cart),
+                Category                   = p_Category,
+                Ticket_Type                 = p_Ticket_Type,
+                Selection_Group             = p_Selection_Group,
+                Max_Selectable_Per_Group      = p_Max_Selectable_Per_Group,
+                Stack_Group                 = p_Stack_Group,
+                Start_Date                  = COALESCE(@Start_Date_Utc, Start_Date),
+                End_Date                    = COALESCE(@End_Date_Utc, End_Date),
+                Channel_Web                 = COALESCE(p_Channel_Web, Channel_Web),
+                Channel_POS                 = COALESCE(p_Channel_POS, Channel_POS),
+                User_Type                   = COALESCE(p_User_Type, User_Type),
+                Promo_Status                = COALESCE(p_Promo_Status, Promo_Status),
+                Is_Active                   = (p_Promo_Status = 'PUBLISHED'),
+                Usage_Limit                 = p_Usage_Limit,
+                Updated_At                  = UTC_TIMESTAMP(),
+                Updated_By                  = p_Updated_By
+            WHERE Promotion_Id = p_Promotion_Id;
+        ELSE
+            INSERT INTO client1.Promotion
+                (Redemption_Method, Promo_Code, Display_Message, Discount_Type, Amount,
+                 Stackable, Priority, Apply_Full_Cart, Category, Ticket_Type,
+                 Selection_Group, Max_Selectable_Per_Group, Stack_Group,
+                 Start_Date, End_Date, Channel_Web, Channel_POS, User_Type,
+                 Promo_Status, Is_Active, Usage_Limit,
+                 Created_At, Created_By, Updated_At, Updated_By)
+            VALUES
+                (p_Redemption_Method, p_Promo_Code, p_Display_Message, p_Discount_Type, p_Amount,
+                 IFNULL(p_Stackable, 1), IFNULL(p_Priority, 3), IFNULL(p_Apply_Full_Cart, 0), p_Category, p_Ticket_Type,
+                 p_Selection_Group, p_Max_Selectable_Per_Group, p_Stack_Group,
+                 @Start_Date_Utc, @End_Date_Utc, IFNULL(p_Channel_Web, 1), IFNULL(p_Channel_POS, 1), IFNULL(p_User_Type, 'ALL_USERS'),
+                 IFNULL(p_Promo_Status, 'DRAFT'), (p_Promo_Status = 'PUBLISHED'), IFNULL(p_Usage_Limit, 0),
+                 UTC_TIMESTAMP(), p_Updated_By, UTC_TIMESTAMP(), p_Updated_By);
+        END IF;
+
+        SET p_Result_Code = 1;
+    END TRY_PROC;
+
+    CALL client1.usp_Insert_User_Session_Log(p_Session_Key, 'usp_Upsert_Promotion', p_Result_Code, Log_Details);
+END
+
+
