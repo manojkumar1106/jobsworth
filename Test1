@@ -1,85 +1,123 @@
-CREATE TABLE IF NOT EXISTS client1.Rule_Definitions (
-    Rule_Definition_Id  BIGINT NOT NULL AUTO_INCREMENT,
-    Rule_Name            VARCHAR(255) NOT NULL,
-    Rule_Type             VARCHAR(255) NOT NULL,
-    Reference_Id           BIGINT NOT NULL,
-    DRL_Content            LONGTEXT,
-    Version                INT DEFAULT 1,
-    Is_Active               BIT NOT NULL DEFAULT 1,
-    Created_By              VARCHAR(255),
-    Created_At               DATETIME,
-    Updated_At                DATETIME,
-    PRIMARY KEY (Rule_Definition_Id),
-    KEY idx_rule_type_reference (Rule_Type, Reference_Id, Is_Active)
-);
+package com.hlt.api.dtos.request;
 
+import lombok.Data;
 
-
-CREATE TABLE IF NOT EXISTS client1.Rule_History (
-    Rule_History_Id  BIGINT NOT NULL AUTO_INCREMENT,
-    Rule_Name         VARCHAR(255) NOT NULL,
-    Rule_Type          VARCHAR(255) NOT NULL,
-    Reference_Id        BIGINT NOT NULL,
-    DRL_Content          LONGTEXT,
-    Version               INT,
-    Action_Taken           VARCHAR(255),
-    Changed_By              VARCHAR(255),
-    Changed_At               DATETIME,
-    PRIMARY KEY (Rule_History_Id),
-    KEY idx_rule_history_lookup (Rule_Name, Version)
-);
+@Data
+public class PhysicalAddressRequest {
+    private String sessionKey;      // set from JWT, not client
+    private Integer locationId;
+    private String streetNumber;
+    private String streetName;
+    private String city;
+    private String state;
+    private String postalCode;
+    private String countryCode;
+    private java.math.BigDecimal latitude;
+    private java.math.BigDecimal longitude;
+    private String timezone;
+}
 
 
 
 
+package com.hlt.api.dao;
+
+import com.hlt.api.dtos.request.PhysicalAddressRequest;
+import org.springframework.stereotype.Repository;
+import java.util.HashMap;
+import java.util.Map;
+
+@Repository
+public class LocationDao extends BaseDao {
+
+    public void createPhysicalAddress(PhysicalAddressRequest req) {
+        Map<String, Object> params = new HashMap<>();
+        params.put("p_Session_Key", req.getSessionKey());
+        params.put("p_Location_Id", req.getLocationId());
+        params.put("p_Street_Number", req.getStreetNumber());
+        params.put("p_Street_Name", req.getStreetName());
+        params.put("p_City", req.getCity());
+        params.put("p_State", req.getState());
+        params.put("p_Postal_Code", req.getPostalCode());
+        params.put("p_Country_Code", req.getCountryCode());
+        params.put("p_Latitude", req.getLatitude());
+        params.put("p_Longitude", req.getLongitude());
+        params.put("p_Timezone", req.getTimezone());
+
+        executeVoid("usp_Create_Physical_Address", params);
+    }
+}
 
 
--- ============================================
--- RULE DEFINITIONS
--- ============================================
-CREATE TABLE IF NOT EXISTS client1.Rule_Definitions (
-    Rule_Definition_Id  BIGINT NOT NULL AUTO_INCREMENT,
-    Rule_Name             VARCHAR(255) NOT NULL,
-    Rule_Type               VARCHAR(255) NOT NULL,
-    Reference_Id               BIGINT NOT NULL,
-    DRL_Content                  LONGTEXT,
-    Version                        INT DEFAULT 1,
-    Is_Active                        BIT NOT NULL DEFAULT 1,
-    Created_By                         VARCHAR(255),
-    Created_At                           DATETIME,
-    Updated_At                             DATETIME,
-    PRIMARY KEY (Rule_Definition_Id),
-    KEY idx_rule_type_reference (Rule_Type, Reference_Id, Is_Active)
-);
 
--- ============================================
--- RULE HISTORY
--- ============================================
-CREATE TABLE IF NOT EXISTS client1.Rule_History (
-    Rule_History_Id  BIGINT NOT NULL AUTO_INCREMENT,
-    Rule_Name          VARCHAR(255) NOT NULL,
-    Rule_Type            VARCHAR(255) NOT NULL,
-    Reference_Id            BIGINT NOT NULL,
-    DRL_Content                LONGTEXT,
-    Version                      INT,
-    Action_Taken                   VARCHAR(255),
-    Changed_By                       VARCHAR(255),
-    Changed_At                         DATETIME,
-    PRIMARY KEY (Rule_History_Id),
-    KEY idx_rule_history_lookup (Rule_Name, Version)
-);
 
--- ============================================
--- PROMO USAGE
--- ============================================
-CREATE TABLE IF NOT EXISTS client1.Promo_Usage (
-    Promo_Usage_Id  INT NOT NULL AUTO_INCREMENT,
-    Promo_Code        VARCHAR(255) NOT NULL,
-    Customer_Id          VARCHAR(255) NOT NULL,
-    Usage_Count            INT DEFAULT 0,
-    First_Used_At             DATETIME,
-    Last_Used_At                DATETIME,
-    PRIMARY KEY (Promo_Usage_Id),
-    UNIQUE KEY uq_promo_customer (Promo_Code, Customer_Id)
-);
+package com.hlt.api.service;
+
+import com.hlt.api.dtos.request.PhysicalAddressRequest;
+
+public interface ILocationService {
+    void createPhysicalAddress(PhysicalAddressRequest req);
+}
+
+
+
+
+
+package com.hlt.api.service.serviceimpl;
+
+import com.hlt.api.dao.LocationDao;
+import com.hlt.api.dtos.request.PhysicalAddressRequest;
+import com.hlt.api.service.ILocationService;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+@Slf4j
+@Service
+public class LocationService implements ILocationService {
+
+    @Autowired
+    private LocationDao locationDao;
+
+    @Override
+    public void createPhysicalAddress(PhysicalAddressRequest req) {
+        log.info("Creating Physical Address for Location: {}", req.getLocationId());
+        locationDao.createPhysicalAddress(req);
+    }
+}
+
+
+
+package com.hlt.api.controller;
+
+import com.hlt.api.dtos.request.PhysicalAddressRequest;
+import com.hlt.api.dtos.response.ApiResponse;
+import com.hlt.api.service.ILocationService;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.web.bind.annotation.*;
+
+@RestController
+@RequestMapping("/api/v1/location")
+@Tag(name = "3. Location Management", description = "Locations and Physical Addresses")
+public class LocationController {
+
+    @Autowired
+    private ILocationService locationService;
+
+    @Operation(summary = "Create Physical Address")
+    @PostMapping("/address")
+    public ApiResponse<String> createPhysicalAddress(
+            @RequestBody PhysicalAddressRequest req,
+            @AuthenticationPrincipal Jwt jwt) {
+        if (jwt != null) {
+            req.setSessionKey(jwt.getClaims().get("origin_jti").toString());
+        }
+        locationService.createPhysicalAddress(req);
+        return ApiResponse.success(message: "Physical Address Created", data: null);
+    }
+}
 
