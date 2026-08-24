@@ -1,58 +1,156 @@
-@Transactional
-public Integer createSystemDiscount(CreateSystemDiscountRequest request) {
+package hlt.promo.engine.dto;
 
-    // Validate
-    if (!request.getStartDate().isBefore(request.getEndDate())) {
-        throw new ValidationException("Start date must be before end date");
-    }
+import com.fasterxml.jackson.annotation.JsonIgnore;
+import hlt.promo.engine.enums.DiscountType;
+import jakarta.validation.constraints.*;
+import lombok.Data;
 
-    // Get timezone for this location
-    String timezone = systemDiscountDao.getTimezoneByLocation(
-            request.getSessionKey(), request.getLocationId().intValue());
+import java.math.BigDecimal;
+import java.time.LocalDateTime;
 
-    // Convert local -> UTC (proc columns are plain DATETIME)
-    request.setStartDate(
-            TimezoneConverter.toUtc(request.getStartDate(), timezone).toLocalDateTime());
-    request.setEndDate(
-            TimezoneConverter.toUtc(request.getEndDate(), timezone).toLocalDateTime());
+@Data
+public class CreatePromotionRequest {
 
-    // Create — proc sets status, approvalStatus, isActive, createdBy
-    CreateSystemDiscountResult result = systemDiscountDao.createSystemDiscount(request);
+    @JsonIgnore
+    private String sessionKey;
 
-    log.info("SystemDiscount created id={} status={} approvalStatus={}",
-            result.systemDiscountId(), result.status(), result.approvalStatus());
+    @NotNull private Long locationId;
+    @NotNull private Long amenityId;
 
-    // only generate the rule if published AND approved
-    if (DiscountStatus.PUBLISHED.name().equals(result.status())
-            && ApprovalStatus.APPROVED.name().equals(result.approvalStatus())) {
-        droolsRuleService.generateSystemDiscountRule(
-                toEntity(request, result.systemDiscountId()), request.getSessionKey());
-    } else if (DiscountStatus.PUBLISHED.name().equals(result.status())) {
-        log.info("SystemDiscount id={} published but awaiting manager approval — rule not generated",
-                result.systemDiscountId());
-    }
+    @NotNull @DecimalMin("0.01")
+    private BigDecimal amount;
 
-    return result.systemDiscountId();
+    @NotNull private DiscountType discountType;          // FLAT | PERCENTAGE
+
+    @NotBlank @Size(max = 254)
+    private String displayMessage;
+
+    private Boolean applyFullCart;
+    @Size(max = 254) private String category;
+    @Size(max = 254) private String ticketType;
+
+    private Boolean channelPos;
+    private Boolean channelWeb;
+
+    @NotNull private LocalDateTime startDate;
+    @NotNull private LocalDateTime endDate;
+
+    private Integer maxSelectablePerGroup;
+    private Integer priority;
+
+    @Size(max = 254) private String promoCode;
+    private String redemptionMethod;                      // AUTOMATIC | PROMO_CODE
+    @Size(max = 254) private String selectionGroup;
+    @Size(max = 254) private String stackGroup;
+    private Boolean stackable;
+
+    private String promoStatus;                           // DRAFT | INACTIVE | PUBLISHED
+
+    @NotNull private Integer usageLimit;
+    @NotNull private String userType;                     // ALL_USERS | MEMBERS | NON_MEMBERS
+    private Integer maxUsagePerCustomer;
 }
 
-private SystemDiscount toEntity(CreateSystemDiscountRequest req, Integer id) {
-    SystemDiscount sd = new SystemDiscount();
-    sd.setId(id.longValue());
-    sd.setTitle(req.getTitle());
-    sd.setDisplayName(req.getDisplayName());
-    sd.setDescription(req.getDiscountDescription());
-    sd.setDiscountType(req.getDiscountType());
-    sd.setAmount(req.getAmount());
-    sd.setMinQuantity(req.getMinQuantity());
-    sd.setUserType(req.getUserType() != null ? UserType.valueOf(req.getUserType()) : null);
-    sd.setStackable(req.getStackable());
-    sd.setStackGroup(req.getStackGroup());
-    sd.setPriority(req.getPriority());
-    sd.setChannelPos(req.getChannelPos());
-    sd.setChannelWeb(req.getChannelWeb());
-    sd.setIcon(req.getIcon());
-    sd.setStartDate(req.getStartDate());
-    sd.setEndDate(req.getEndDate());
-    sd.setManagerApprovalRequired(req.getManagerApprovalRequired());
-    return sd;
+
+
+
+
+package hlt.promo.engine.dao;
+
+import hlt.promo.engine.dto.CreatePromotionRequest;
+import org.springframework.stereotype.Repository;
+
+import java.sql.Timestamp;
+import java.util.HashMap;
+import java.util.Map;
+
+@Repository
+public class PromotionDao extends BaseDao {
+
+    public String getTimezoneByLocation(String sessionKey, Integer locationId) {
+        Map<String, Object> params = new HashMap<>();
+        params.put("p_Session_Key", sessionKey);
+        params.put("p_Location_Id", locationId);
+        return executeReturnType("usp_Get_Location_Discount", "p_Timezone", params);
+    }
+
+    public void createPromotion(CreatePromotionRequest req) {
+        Map<String, Object> params = new HashMap<>();
+        params.put("p_Session_Key", req.getSessionKey());
+        params.put("p_Location_Id", req.getLocationId());
+        params.put("p_Amenity_Id", req.getAmenityId());
+        params.put("p_Amount", req.getAmount());
+        params.put("p_Apply_Full_Cart", req.getApplyFullCart());
+        params.put("p_Category", req.getCategory());
+        params.put("p_Channel_POS", req.getChannelPos());
+        params.put("p_Channel_Web", req.getChannelWeb());
+        params.put("p_Discount_Type", req.getDiscountType() != null ? req.getDiscountType().name() : null);
+        params.put("p_Display_Message", req.getDisplayMessage());
+        params.put("p_End_Date", req.getEndDate() != null ? Timestamp.valueOf(req.getEndDate()) : null);
+        params.put("p_Max_Selectable_Per_Group", req.getMaxSelectablePerGroup());
+        params.put("p_Priority", req.getPriority());
+        params.put("p_Promo_Code", req.getPromoCode());
+        params.put("p_Redemption_Method", req.getRedemptionMethod());
+        params.put("p_Selection_Group", req.getSelectionGroup());
+        params.put("p_Stack_Group", req.getStackGroup());
+        params.put("p_Stackable", req.getStackable());
+        params.put("p_Start_Date", req.getStartDate() != null ? Timestamp.valueOf(req.getStartDate()) : null);
+        params.put("p_Promo_Status", req.getPromoStatus());
+        params.put("p_Ticket_Type", req.getTicketType());
+        params.put("p_Usage_Limit", req.getUsageLimit());
+        params.put("p_User_Type", req.getUserType());
+        params.put("p_Max_Usage_Per_Customer", req.getMaxUsagePerCustomer());
+
+        executeVoid("usp_Create_Promotion", params);
+    }
 }
+
+
+
+
+
+package hlt.promo.engine.service;
+
+import hlt.promo.engine.dao.PromotionDao;
+import hlt.promo.engine.dto.CreatePromotionRequest;
+import hlt.promo.engine.exception.ValidationException;
+import hlt.promo.engine.util.TimezoneConverter;
+import lombok.RequiredArgsConstructor;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+@RequiredArgsConstructor
+public class PromotionServiceNew {
+
+    private static final Logger log = LoggerFactory.getLogger(PromotionServiceNew.class);
+
+    private final PromotionDao promotionDao;
+
+    @Transactional
+    public void createPromotion(CreatePromotionRequest request) {
+
+        if (!request.getStartDate().isBefore(request.getEndDate())) {
+            throw new ValidationException("Start date must be before end date");
+        }
+
+        String timezone = promotionDao.getTimezoneByLocation(
+                request.getSessionKey(), request.getLocationId().intValue());
+
+        request.setStartDate(
+                TimezoneConverter.toUtc(request.getStartDate(), timezone).toLocalDateTime());
+        request.setEndDate(
+                TimezoneConverter.toUtc(request.getEndDate(), timezone).toLocalDateTime());
+
+        promotionDao.createPromotion(request);
+
+        log.info("Promotion created location={} amenity={} promoCode={}",
+                request.getLocationId(), request.getAmenityId(), request.getPromoCode());
+    }
+}
+
+
+
+
