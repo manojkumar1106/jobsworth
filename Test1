@@ -1,23 +1,35 @@
-    /** Proc with an OUT param holding a generated id. */
-    protected Integer executeReturnId(String procName, String outParamName,
-                                      Map<String, Object> params) {
-        Map<String, Object> out = call(procName).execute(params);
-        Object value = out.get(outParamName);
-        return value != null ? ((Number) value).intValue() : null;
-    }
+public Integer createSystemDiscount(String sessionKey,
+                                    Integer locationId, Integer amenityId,
+                                    String title, String displayName, String description,
+                                    String discountType, BigDecimal amount,
+                                    Integer minQuantity, String userType,
+                                    Boolean channelPos, Boolean channelWeb,
+                                    OffsetDateTime startUtc, OffsetDateTime endUtc,
+                                    Boolean stackable, String stackGroup,
+                                    Integer priority, Boolean managerApprovalRequired,
+                                    String icon, String status) {
 
-    /** Proc with a single OUT param returned as String. */
-    protected String executeReturnType(String procName, String outParamName,
-                                       Map<String, Object> params) {
-        Map<String, Object> out = call(procName).execute(params);
-        return String.valueOf(out.get(outParamName));
-    }
+    Map<String, Object> params = new HashMap<>();
+    params.put("p_Session_Key", sessionKey);
+    params.put("p_Location_Id", locationId);
+    params.put("p_Amenity_Id", amenityId);
+    params.put("p_Title", title);
+    params.put("p_Display_Name", displayName);
+    params.put("p_Discount_Description", description);
+    params.put("p_Discount_Type", discountType);
+    params.put("p_Amount", amount);
+    params.put("p_Min_Quantity", minQuantity);
+    params.put("p_User_Type", userType);
+    params.put("p_Channel_POS", channelPos);
+    params.put("p_Channel_Web", channelWeb);
+    params.put("p_Start_Date", startUtc != null ? Timestamp.valueOf(startUtc.toLocalDateTime()) : null);
+    params.put("p_End_Date", endUtc != null ? Timestamp.valueOf(endUtc.toLocalDateTime()) : null);
+    params.put("p_Stackable", stackable);
+    params.put("p_Stack_Group", stackGroup);
+    params.put("p_Priority", priority);
+    params.put("p_Manager_Approval_Required", managerApprovalRequired);
+    params.put("p_Icon", icon);
+    params.put("p_System_Discount_Status", status);
 
-    /** Proc returning an unnamed result set as raw maps. */
-    @SuppressWarnings("unchecked")
-    protected List<Map<String, Object>> executeList(String procName,
-                                                    Map<String, Object> params) {
-        Map<String, Object> out = call(procName).execute(params);
-        List<Map<String, Object>> rows = (List<Map<String, Object>>) out.get("#result-set-1");
-        return rows != null ? rows : Collections.emptyList();
-    }
+    return executeReturnId("usp_Create_System_Discount", "p_System_Discount_Id", params);
+}
