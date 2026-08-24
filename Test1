@@ -154,3 +154,31 @@ public class PromotionServiceNew {
 
 
 
+
+POST /api/promotions/create
+
+{
+  "locationId": 1,
+  "amenityId": 219,
+  "amount": 15.00,
+  "discountType": "PERCENTAGE",
+  "displayMessage": "15% off your cart this September",
+  "applyFullCart": true,
+  "channelPos": true,
+  "channelWeb": true,
+  "startDate": "2026-09-01T09:00:00",
+  "endDate": "2026-09-30T17:00:00",
+  "maxSelectablePerGroup": 1,
+  "priority": 1,
+  "promoCode": "SEPT15",
+  "redemptionMethod": "PROMO_CODE",
+  "selectionGroup": "SEPT_CAMPAIGN",
+  "stackGroup": null,
+  "stackable": false,
+  "promoStatus": "DRAFT",
+  "usageLimit": 100,
+  "userType": "ALL_USERS",
+  "maxUsagePerCustomer": 1
+}
+
+
