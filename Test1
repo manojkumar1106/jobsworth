@@ -1,55 +1,39 @@
-package hlt.promo.engine.service;
+package hlt.promo.engine.dao;
 
-import hlt.promo.engine.dao.SystemDiscountDao;
 import hlt.promo.engine.dto.CreateSystemDiscountRequest;
-import hlt.promo.engine.exception.ValidationException;
-import hlt.promo.engine.repository.TimezoneRepository;
-import hlt.promo.engine.util.TimezoneConverter;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.stereotype.Repository;
 
-@Service
-public class SystemDiscountServiceNew {
+import java.sql.Timestamp;
+import java.util.HashMap;
+import java.util.Map;
 
-    private static final Logger log = LoggerFactory.getLogger(SystemDiscountServiceNew.class);
+@Repository
+public class SystemDiscountDao extends BaseDao {
 
-    private final SystemDiscountDao systemDiscountDao;
-    private final TimezoneRepository timezoneRepository;
+    public Integer createSystemDiscount(CreateSystemDiscountRequest req) {
 
-    public SystemDiscountServiceNew(SystemDiscountDao systemDiscountDao,
-                                    TimezoneRepository timezoneRepository) {
-        this.systemDiscountDao = systemDiscountDao;
-        this.timezoneRepository = timezoneRepository;
-    }
+        Map<String, Object> params = new HashMap<>();
+        params.put("p_Session_Key", req.getSessionKey());
+        params.put("p_Location_Id", req.getLocationId());
+        params.put("p_Amenity_Id", req.getAmenityId());
+        params.put("p_Title", req.getTitle());
+        params.put("p_Display_Name", req.getDisplayName());
+        params.put("p_Discount_Description", req.getDiscountDescription());
+        params.put("p_Discount_Type", req.getDiscountType() != null ? req.getDiscountType().name() : null);
+        params.put("p_Amount", req.getAmount());
+        params.put("p_Min_Quantity", req.getMinQuantity());
+        params.put("p_User_Type", req.getUserType());
+        params.put("p_Channel_POS", req.getChannelPos());
+        params.put("p_Channel_Web", req.getChannelWeb());
+        params.put("p_Start_Date", req.getStartDate() != null ? Timestamp.valueOf(req.getStartDate()) : null);
+        params.put("p_End_Date", req.getEndDate() != null ? Timestamp.valueOf(req.getEndDate()) : null);
+        params.put("p_Stackable", req.getStackable());
+        params.put("p_Stack_Group", req.getStackGroup());
+        params.put("p_Priority", req.getPriority());
+        params.put("p_Manager_Approval_Required", req.getManagerApprovalRequired());
+        params.put("p_Icon", req.getIcon());
+        params.put("p_System_Discount_Status", req.getSystemDiscountStatus());
 
-    // ------------------------------------------------------------
-    // CREATE SYSTEM DISCOUNT
-    // ------------------------------------------------------------
-    @Transactional
-    public Integer createSystemDiscount(CreateSystemDiscountRequest request) {
-
-        // Validate
-        if (!request.getStartDate().isBefore(request.getEndDate())) {
-            throw new ValidationException("Start date must be before end date");
-        }
-
-        // Get timezone for this location
-        String timezone = timezoneRepository.getTimezoneByLocation(request.getLocationId());
-
-        // Convert local -> UTC (proc columns are plain DATETIME)
-        request.setStartDate(
-                TimezoneConverter.toUtc(request.getStartDate(), timezone).toLocalDateTime());
-        request.setEndDate(
-                TimezoneConverter.toUtc(request.getEndDate(), timezone).toLocalDateTime());
-
-        // Create
-        Integer id = systemDiscountDao.createSystemDiscount(request);
-
-        log.info("Created system discount id={} location={} amenity={}",
-                id, request.getLocationId(), request.getAmenityId());
-
-        return id;
+        return executeReturnId("usp_Create_System_Discount", "p_System_Discount_Id", params);
     }
 }
