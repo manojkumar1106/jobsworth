@@ -134,3 +134,68 @@ public abstract class BasePromoDao {
     }
 }
 
+
+
+
+
+
+package com.hlt.api.dao;
+
+import org.springframework.stereotype.Repository;
+
+import java.sql.Timestamp;
+import java.time.OffsetDateTime;
+import java.math.BigDecimal;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+@Repository
+public class PromotionDao extends BaseDao {
+
+    public Integer createSystemDiscount(Integer locationId, Integer amenityId,
+                                        String name, String description,
+                                        String discountType, BigDecimal discountValue,
+                                        OffsetDateTime startUtc, OffsetDateTime endUtc,
+                                        String createdBy) {
+        Map<String, Object> params = new HashMap<>();
+        params.put("p_Location_Id", locationId);
+        params.put("p_Amenity_Id", amenityId);
+        params.put("p_Name", name);
+        params.put("p_Description", description);
+        params.put("p_Discount_Type", discountType);
+        params.put("p_Discount_Value", discountValue);
+        params.put("p_Start_Date_Utc", Timestamp.valueOf(startUtc.toLocalDateTime()));
+        params.put("p_End_Date_Utc", Timestamp.valueOf(endUtc.toLocalDateTime()));
+        params.put("p_Created_By", createdBy);
+        return executeReturnId("usp_Create_System_Discount", "p_Discount_Id", params);
+    }
+
+    public void updateSystemDiscountDates(Integer discountId,
+                                          OffsetDateTime startUtc, OffsetDateTime endUtc) {
+        Map<String, Object> params = new HashMap<>();
+        params.put("p_Id", discountId);
+        params.put("p_Start_Date_Utc", Timestamp.valueOf(startUtc.toLocalDateTime()));
+        params.put("p_End_Date_Utc", Timestamp.valueOf(endUtc.toLocalDateTime()));
+        executeVoid("usp_Update_System_Discount_Dates", params);
+    }
+
+    public String getLocationIdForDiscount(Integer discountId) {
+        Map<String, Object> params = new HashMap<>();
+        params.put("p_Discount_Id", discountId);
+        return executeReturnType("usp_Get_Location_Id_For_System_Discount", "p_Location_Id", params);
+    }
+
+    public List<Map<String, Object>> getActiveForLocation(Integer locationId) {
+        Map<String, Object> params = new HashMap<>();
+        params.put("p_Location_Id", locationId);
+        return executeList("usp_Get_Active_System_Discounts_For_Location", params);
+    }
+
+    public List<Map<String, Object>> getSystemDiscountDetail(Integer discountId) {
+        Map<String, Object> params = new HashMap<>();
+        params.put("p_Id", discountId);
+        return executeList("usp_Get_System_Discount_Detail", params);
+    }
+}
+
