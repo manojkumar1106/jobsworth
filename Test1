@@ -1,20 +1,58 @@
-POST /api/v1/system-discount/create
-{
-  "locationId": 1,
-  "amenityId": 219,
-  "title": "Summer Museum Admission",
-  "displayName": "Summer Special",
-  "discountDescription": "20% off general admission",
-  "discountType": "PERCENTAGE",
-  "amount": 20.00,
-  "minQuantity": 1,
-  "userType": "ALL_USERS",
-  "channelPos": true,
-  "channelWeb": true,
-  "startDate": "2026-09-01T09:00:00",
-  "endDate": "2026-09-30T17:00:00",
-  "stackable": false,
-  "priority": 1,
-  "managerApprovalRequired": true,
-  "systemDiscountStatus": "DRAFT"
+@Transactional
+public Integer createSystemDiscount(CreateSystemDiscountRequest request) {
+
+    // Validate
+    if (!request.getStartDate().isBefore(request.getEndDate())) {
+        throw new ValidationException("Start date must be before end date");
+    }
+
+    // Get timezone for this location
+    String timezone = systemDiscountDao.getTimezoneByLocation(
+            request.getSessionKey(), request.getLocationId().intValue());
+
+    // Convert local -> UTC (proc columns are plain DATETIME)
+    request.setStartDate(
+            TimezoneConverter.toUtc(request.getStartDate(), timezone).toLocalDateTime());
+    request.setEndDate(
+            TimezoneConverter.toUtc(request.getEndDate(), timezone).toLocalDateTime());
+
+    // Create — proc sets status, approvalStatus, isActive, createdBy
+    CreateSystemDiscountResult result = systemDiscountDao.createSystemDiscount(request);
+
+    log.info("SystemDiscount created id={} status={} approvalStatus={}",
+            result.systemDiscountId(), result.status(), result.approvalStatus());
+
+    // only generate the rule if published AND approved
+    if (DiscountStatus.PUBLISHED.name().equals(result.status())
+            && ApprovalStatus.APPROVED.name().equals(result.approvalStatus())) {
+        droolsRuleService.generateSystemDiscountRule(
+                toEntity(request, result.systemDiscountId()), request.getSessionKey());
+    } else if (DiscountStatus.PUBLISHED.name().equals(result.status())) {
+        log.info("SystemDiscount id={} published but awaiting manager approval — rule not generated",
+                result.systemDiscountId());
+    }
+
+    return result.systemDiscountId();
+}
+
+private SystemDiscount toEntity(CreateSystemDiscountRequest req, Integer id) {
+    SystemDiscount sd = new SystemDiscount();
+    sd.setId(id.longValue());
+    sd.setTitle(req.getTitle());
+    sd.setDisplayName(req.getDisplayName());
+    sd.setDescription(req.getDiscountDescription());
+    sd.setDiscountType(req.getDiscountType());
+    sd.setAmount(req.getAmount());
+    sd.setMinQuantity(req.getMinQuantity());
+    sd.setUserType(req.getUserType() != null ? UserType.valueOf(req.getUserType()) : null);
+    sd.setStackable(req.getStackable());
+    sd.setStackGroup(req.getStackGroup());
+    sd.setPriority(req.getPriority());
+    sd.setChannelPos(req.getChannelPos());
+    sd.setChannelWeb(req.getChannelWeb());
+    sd.setIcon(req.getIcon());
+    sd.setStartDate(req.getStartDate());
+    sd.setEndDate(req.getEndDate());
+    sd.setManagerApprovalRequired(req.getManagerApprovalRequired());
+    return sd;
 }
