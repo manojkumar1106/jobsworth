@@ -1,35 +1,59 @@
-public Integer createSystemDiscount(String sessionKey,
-                                    Integer locationId, Integer amenityId,
-                                    String title, String displayName, String description,
-                                    String discountType, BigDecimal amount,
-                                    Integer minQuantity, String userType,
-                                    Boolean channelPos, Boolean channelWeb,
-                                    OffsetDateTime startUtc, OffsetDateTime endUtc,
-                                    Boolean stackable, String stackGroup,
-                                    Integer priority, Boolean managerApprovalRequired,
-                                    String icon, String status) {
+package hlt.promo.engine.dto;
 
-    Map<String, Object> params = new HashMap<>();
-    params.put("p_Session_Key", sessionKey);
-    params.put("p_Location_Id", locationId);
-    params.put("p_Amenity_Id", amenityId);
-    params.put("p_Title", title);
-    params.put("p_Display_Name", displayName);
-    params.put("p_Discount_Description", description);
-    params.put("p_Discount_Type", discountType);
-    params.put("p_Amount", amount);
-    params.put("p_Min_Quantity", minQuantity);
-    params.put("p_User_Type", userType);
-    params.put("p_Channel_POS", channelPos);
-    params.put("p_Channel_Web", channelWeb);
-    params.put("p_Start_Date", startUtc != null ? Timestamp.valueOf(startUtc.toLocalDateTime()) : null);
-    params.put("p_End_Date", endUtc != null ? Timestamp.valueOf(endUtc.toLocalDateTime()) : null);
-    params.put("p_Stackable", stackable);
-    params.put("p_Stack_Group", stackGroup);
-    params.put("p_Priority", priority);
-    params.put("p_Manager_Approval_Required", managerApprovalRequired);
-    params.put("p_Icon", icon);
-    params.put("p_System_Discount_Status", status);
+import hlt.promo.engine.enums.DiscountType;
+import jakarta.validation.constraints.*;
+import lombok.Data;
 
-    return executeReturnId("usp_Create_System_Discount", "p_System_Discount_Id", params);
+import java.math.BigDecimal;
+import java.time.LocalDateTime;
+
+@Data
+public class CreateSystemDiscountRequest {
+
+    private String sessionKey;   // set by controller from JWT, not sent by client
+
+    @NotNull
+    private Long locationId;
+
+    @NotNull
+    private Long amenityId;
+
+    @NotBlank @Size(max = 254)
+    private String title;
+
+    @Size(max = 254)
+    private String displayName;
+
+    @Size(max = 254)
+    private String discountDescription;
+
+    @NotNull
+    private DiscountType discountType;
+
+    @NotNull @DecimalMin("0.01")
+    private BigDecimal amount;
+
+    private Integer minQuantity;
+    private String userType;
+    private Boolean channelPos;
+    private Boolean channelWeb;
+
+    @NotNull
+    private LocalDateTime startDate;
+
+    @NotNull
+    private LocalDateTime endDate;
+
+    private Boolean stackable;
+
+    @Size(max = 254)
+    private String stackGroup;
+
+    private Integer priority;
+    private Boolean managerApprovalRequired;
+
+    @Size(max = 254)
+    private String icon;
+
+    private String systemDiscountStatus;
 }
