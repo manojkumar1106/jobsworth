@@ -1,201 +1,23 @@
-package hlt.promo.engine.repository;
-
-import hlt.promo.engine.dto.ActivePromotionDTO;
-import hlt.promo.engine.dto.PromotionDetailDTO;
-import hlt.promo.engine.exception.PromotionNotFoundException;
-import org.springframework.jdbc.core.RowMapper;
-import org.springframework.stereotype.Repository;
-
-import java.sql.Timestamp;
-import java.time.LocalDateTime;
-import java.time.OffsetDateTime;
-import java.util.List;
-import java.util.Map;
-
-@Repository
-public class PromotionDao extends BasePromoDao {
-
-    private static final RowMapper<ActivePromotionDTO> ACTIVE_MAPPER = (rs, n) -> new ActivePromotionDTO(
-            rs.getLong("id"),
-            rs.getString("name"),
-            rs.getString("description"),
-            rs.getString("discount_type"),
-            rs.getBigDecimal("discount_value"),
-            rs.getLong("amenity_id"),
-            rs.getString("amenity_name"),
-            rs.getString("location_function_name"),
-            toLdt(rs.getTimestamp("start_date_utc")),
-            toLdt(rs.getTimestamp("end_date_utc")),
-            rs.getString("location_timezone"),
-            toLdt(rs.getTimestamp("local_start")),
-            toLdt(rs.getTimestamp("local_end")),
-            toLdt(rs.getTimestamp("local_now"))
-    );
-
-    private static LocalDateTime toLdt(Timestamp ts) {
-        return ts != null ? ts.toLocalDateTime() : null;
-    }
-
-    public Long createSystemDiscount(Long locationId, Long amenityId, String name, String description,
-                                     String discountType, java.math.BigDecimal discountValue,
-                                     OffsetDateTime startUtc, OffsetDateTime endUtc, String createdBy) {
-        return executeReturnOut("sp_create_system_discount", "p_discount_id", Long.class, Map.of(
-                "p_location_id", locationId,
-                "p_amenity_id", amenityId,
-                "p_name", name,
-                "p_description", description != null ? description : "",
-                "p_discount_type", discountType,
-                "p_discount_value", discountValue,
-                "p_start_date_utc", Timestamp.valueOf(startUtc.toLocalDateTime()),
-                "p_end_date_utc", Timestamp.valueOf(endUtc.toLocalDateTime()),
-                "p_created_by", createdBy != null ? createdBy : "SYSTEM"
-        ));
-    }
-
-    public void updateSystemDiscountDates(Long discountId, OffsetDateTime startUtc, OffsetDateTime endUtc) {
-        executeVoid("sp_update_system_discount_dates", Map.of(
-                "p_id", discountId,
-                "p_start_date_utc", Timestamp.valueOf(startUtc.toLocalDateTime()),
-                "p_end_date_utc", Timestamp.valueOf(endUtc.toLocalDateTime())
-        ));
-    }
-
-    public Long getLocationIdForDiscount(Long discountId) {
-        Long locationId = executeReturnOut("sp_get_location_id_for_system_discount",
-                "p_location_id", Long.class, Map.of("p_discount_id", discountId));
-        if (locationId == null) {
-            throw new PromotionNotFoundException("System discount not found: " + discountId);
-        }
-        return locationId;
-    }
-
-    public List<ActivePromotionDTO> getActiveForLocation(Long locationId) {
-        return executeList("sp_get_active_system_discounts_for_location",
-                "activeDiscounts", ACTIVE_MAPPER, Map.of("p_location_id", locationId));
-    }
-}
-
-
-
-
-package hlt.promo.engine.repository;
-
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.jdbc.core.RowMapper;
-import org.springframework.jdbc.core.SqlParameter;
-import org.springframework.jdbc.core.simple.SimpleJdbcCall;
-
-import java.sql.Connection;
-import java.util.Collections;
-import java.util.List;
-import java.util.Map;
-
-public abstract class BasePromoDao {
-
-    @Autowired
-    protected JdbcTemplate jdbcTemplate;
-
-    protected SimpleJdbcCall call(String procName) {
-        String schemaName = jdbcTemplate.execute((Connection conn) -> conn.getCatalog());
-        return new SimpleJdbcCall(jdbcTemplate)
-                .withCatalogName(schemaName)
-                .withProcedureName(procName);
-    }
-
-    /** Proc with no result set (update-style). */
-    protected void executeVoid(String procName, Map<String, Object> params) {
-        call(procName).execute(params);
-    }
-
-    /** Proc with a single OUT param. */
-    protected <T> T executeReturnOut(String procName, String outParamName,
-                                     Class<T> type, Map<String, Object> params) {
+    /** Proc with an OUT param holding a generated id. */
+    protected Integer executeReturnId(String procName, String outParamName,
+                                      Map<String, Object> params) {
         Map<String, Object> out = call(procName).execute(params);
-        return type.cast(out.get(outParamName));
+        Object value = out.get(outParamName);
+        return value != null ? ((Number) value).intValue() : null;
     }
 
-    /** Proc returning a named result set, mapped by an explicit RowMapper. */
-    @SuppressWarnings("unchecked")
-    protected <T> List<T> executeList(String procName, String resultSetName,
-                                      RowMapper<T> mapper, Map<String, Object> params) {
-        Map<String, Object> out = call(procName)
-                .returningResultSet(resultSetName, mapper)
-                .execute(params);
+    /** Proc with a single OUT param returned as String. */
+    protected String executeReturnType(String procName, String outParamName,
+                                       Map<String, Object> params) {
+        Map<String, Object> out = call(procName).execute(params);
+        return String.valueOf(out.get(outParamName));
+    }
 
-        List<T> rows = (List<T>) out.get(resultSetName);
+    /** Proc returning an unnamed result set as raw maps. */
+    @SuppressWarnings("unchecked")
+    protected List<Map<String, Object>> executeList(String procName,
+                                                    Map<String, Object> params) {
+        Map<String, Object> out = call(procName).execute(params);
+        List<Map<String, Object>> rows = (List<Map<String, Object>>) out.get("#result-set-1");
         return rows != null ? rows : Collections.emptyList();
     }
-
-    protected <T> T executeSingle(String procName, String resultSetName,
-                                  RowMapper<T> mapper, Map<String, Object> params) {
-        List<T> rows = executeList(procName, resultSetName, mapper, params);
-        return rows.isEmpty() ? null : rows.get(0);
-    }
-}
-
-
-
-
-
-
-package com.hlt.api.dao;
-
-import org.springframework.stereotype.Repository;
-
-import java.sql.Timestamp;
-import java.time.OffsetDateTime;
-import java.math.BigDecimal;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-
-@Repository
-public class PromotionDao extends BaseDao {
-
-    public Integer createSystemDiscount(Integer locationId, Integer amenityId,
-                                        String name, String description,
-                                        String discountType, BigDecimal discountValue,
-                                        OffsetDateTime startUtc, OffsetDateTime endUtc,
-                                        String createdBy) {
-        Map<String, Object> params = new HashMap<>();
-        params.put("p_Location_Id", locationId);
-        params.put("p_Amenity_Id", amenityId);
-        params.put("p_Name", name);
-        params.put("p_Description", description);
-        params.put("p_Discount_Type", discountType);
-        params.put("p_Discount_Value", discountValue);
-        params.put("p_Start_Date_Utc", Timestamp.valueOf(startUtc.toLocalDateTime()));
-        params.put("p_End_Date_Utc", Timestamp.valueOf(endUtc.toLocalDateTime()));
-        params.put("p_Created_By", createdBy);
-        return executeReturnId("usp_Create_System_Discount", "p_Discount_Id", params);
-    }
-
-    public void updateSystemDiscountDates(Integer discountId,
-                                          OffsetDateTime startUtc, OffsetDateTime endUtc) {
-        Map<String, Object> params = new HashMap<>();
-        params.put("p_Id", discountId);
-        params.put("p_Start_Date_Utc", Timestamp.valueOf(startUtc.toLocalDateTime()));
-        params.put("p_End_Date_Utc", Timestamp.valueOf(endUtc.toLocalDateTime()));
-        executeVoid("usp_Update_System_Discount_Dates", params);
-    }
-
-    public String getLocationIdForDiscount(Integer discountId) {
-        Map<String, Object> params = new HashMap<>();
-        params.put("p_Discount_Id", discountId);
-        return executeReturnType("usp_Get_Location_Id_For_System_Discount", "p_Location_Id", params);
-    }
-
-    public List<Map<String, Object>> getActiveForLocation(Integer locationId) {
-        Map<String, Object> params = new HashMap<>();
-        params.put("p_Location_Id", locationId);
-        return executeList("usp_Get_Active_System_Discounts_For_Location", params);
-    }
-
-    public List<Map<String, Object>> getSystemDiscountDetail(Integer discountId) {
-        Map<String, Object> params = new HashMap<>();
-        params.put("p_Id", discountId);
-        return executeList("usp_Get_System_Discount_Detail", params);
-    }
-}
-
