@@ -1,39 +1,20 @@
-package hlt.promo.engine.dao;
-
-import hlt.promo.engine.dto.CreateSystemDiscountRequest;
-import org.springframework.stereotype.Repository;
-
-import java.sql.Timestamp;
-import java.util.HashMap;
-import java.util.Map;
-
-@Repository
-public class SystemDiscountDao extends BaseDao {
-
-    public Integer createSystemDiscount(CreateSystemDiscountRequest req) {
-
-        Map<String, Object> params = new HashMap<>();
-        params.put("p_Session_Key", req.getSessionKey());
-        params.put("p_Location_Id", req.getLocationId());
-        params.put("p_Amenity_Id", req.getAmenityId());
-        params.put("p_Title", req.getTitle());
-        params.put("p_Display_Name", req.getDisplayName());
-        params.put("p_Discount_Description", req.getDiscountDescription());
-        params.put("p_Discount_Type", req.getDiscountType() != null ? req.getDiscountType().name() : null);
-        params.put("p_Amount", req.getAmount());
-        params.put("p_Min_Quantity", req.getMinQuantity());
-        params.put("p_User_Type", req.getUserType());
-        params.put("p_Channel_POS", req.getChannelPos());
-        params.put("p_Channel_Web", req.getChannelWeb());
-        params.put("p_Start_Date", req.getStartDate() != null ? Timestamp.valueOf(req.getStartDate()) : null);
-        params.put("p_End_Date", req.getEndDate() != null ? Timestamp.valueOf(req.getEndDate()) : null);
-        params.put("p_Stackable", req.getStackable());
-        params.put("p_Stack_Group", req.getStackGroup());
-        params.put("p_Priority", req.getPriority());
-        params.put("p_Manager_Approval_Required", req.getManagerApprovalRequired());
-        params.put("p_Icon", req.getIcon());
-        params.put("p_System_Discount_Status", req.getSystemDiscountStatus());
-
-        return executeReturnId("usp_Create_System_Discount", "p_System_Discount_Id", params);
-    }
+POST /api/v1/system-discount/create
+{
+  "locationId": 1,
+  "amenityId": 219,
+  "title": "Summer Museum Admission",
+  "displayName": "Summer Special",
+  "discountDescription": "20% off general admission",
+  "discountType": "PERCENTAGE",
+  "amount": 20.00,
+  "minQuantity": 1,
+  "userType": "ALL_USERS",
+  "channelPos": true,
+  "channelWeb": true,
+  "startDate": "2026-09-01T09:00:00",
+  "endDate": "2026-09-30T17:00:00",
+  "stackable": false,
+  "priority": 1,
+  "managerApprovalRequired": true,
+  "systemDiscountStatus": "DRAFT"
 }
