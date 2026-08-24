@@ -1,92 +1,136 @@
-package com.app.service;
+package hlt.promo.engine.repository;
 
-import com.app.dto.*;
-import com.app.exception.ValidationException;
-import com.app.repository.PromotionRepository;
-import com.app.repository.TimezoneRepository;
-import com.app.util.TimezoneConverter;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
+import hlt.promo.engine.dto.ActivePromotionDTO;
+import hlt.promo.engine.dto.PromotionDetailDTO;
+import hlt.promo.engine.exception.PromotionNotFoundException;
+import org.springframework.jdbc.core.RowMapper;
+import org.springframework.stereotype.Repository;
 
+import java.sql.Timestamp;
+import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
+import java.util.List;
+import java.util.Map;
 
-@Service
-public class PromotionService {
+@Repository
+public class PromotionDao extends BasePromoDao {
 
-    private static final Logger log = LoggerFactory.getLogger(PromotionService.class);
-    private final PromotionRepository repository;
-    private final TimezoneRepository timezoneRepository;
+    private static final RowMapper<ActivePromotionDTO> ACTIVE_MAPPER = (rs, n) -> new ActivePromotionDTO(
+            rs.getLong("id"),
+            rs.getString("name"),
+            rs.getString("description"),
+            rs.getString("discount_type"),
+            rs.getBigDecimal("discount_value"),
+            rs.getLong("amenity_id"),
+            rs.getString("amenity_name"),
+            rs.getString("location_function_name"),
+            toLdt(rs.getTimestamp("start_date_utc")),
+            toLdt(rs.getTimestamp("end_date_utc")),
+            rs.getString("location_timezone"),
+            toLdt(rs.getTimestamp("local_start")),
+            toLdt(rs.getTimestamp("local_end")),
+            toLdt(rs.getTimestamp("local_now"))
+    );
 
-    public PromotionService(PromotionRepository repository,
-                            TimezoneRepository timezoneRepository) {
-        this.repository = repository;
-        this.timezoneRepository = timezoneRepository;
+    private static LocalDateTime toLdt(Timestamp ts) {
+        return ts != null ? ts.toLocalDateTime() : null;
     }
 
-    @Transactional
-    public Long createPromotion(CreatePromotionRequest request) {
-
-        // Validate
-        if (!request.startDate().isBefore(request.endDate())) {
-            throw new ValidationException("Start date must be before end date");
-        }
-
-        // Get timezone for this ONE location
-        String timezone = timezoneRepository
-            .getTimezoneByLocation(request.locationId());
-
-        // Convert local → UTC (DST handled automatically)
-        OffsetDateTime startUtc = TimezoneConverter
-            .toUtc(request.startDate(), timezone);
-        OffsetDateTime endUtc = TimezoneConverter
-            .toUtc(request.endDate(), timezone);
-
-        // Create ONE row
-        Long id = repository.createPromotion(
-            request.locationId(),
-            request.amenityId(),
-            request.name(),
-            request.description(),
-            request.discountType().name(),
-            request.discountValue(),
-            startUtc,
-            endUtc,
-            request.createdBy()
-        );
-
-        log.info("Created promotion id={} location={} amenity={}",
-            id, request.locationId(), request.amenityId());
-
-        return id;
+    public Long createSystemDiscount(Long locationId, Long amenityId, String name, String description,
+                                     String discountType, java.math.BigDecimal discountValue,
+                                     OffsetDateTime startUtc, OffsetDateTime endUtc, String createdBy) {
+        return executeReturnOut("sp_create_system_discount", "p_discount_id", Long.class, Map.of(
+                "p_location_id", locationId,
+                "p_amenity_id", amenityId,
+                "p_name", name,
+                "p_description", description != null ? description : "",
+                "p_discount_type", discountType,
+                "p_discount_value", discountValue,
+                "p_start_date_utc", Timestamp.valueOf(startUtc.toLocalDateTime()),
+                "p_end_date_utc", Timestamp.valueOf(endUtc.toLocalDateTime()),
+                "p_created_by", createdBy != null ? createdBy : "SYSTEM"
+        ));
     }
 
-    @Transactional
-    public void updatePromotionDates(Long promotionId, UpdateDatesRequest request) {
+    public void updateSystemDiscountDates(Long discountId, OffsetDateTime startUtc, OffsetDateTime endUtc) {
+        executeVoid("sp_update_system_discount_dates", Map.of(
+                "p_id", discountId,
+                "p_start_date_utc", Timestamp.valueOf(startUtc.toLocalDateTime()),
+                "p_end_date_utc", Timestamp.valueOf(endUtc.toLocalDateTime())
+        ));
+    }
 
-        if (!request.newStartDate().isBefore(request.newEndDate())) {
-            throw new ValidationException("Start date must be before end date");
+    public Long getLocationIdForDiscount(Long discountId) {
+        Long locationId = executeReturnOut("sp_get_location_id_for_system_discount",
+                "p_location_id", Long.class, Map.of("p_discount_id", discountId));
+        if (locationId == null) {
+            throw new PromotionNotFoundException("System discount not found: " + discountId);
         }
+        return locationId;
+    }
 
-        // Get location_id for this promotion
-        Long locationId = repository.getLocationIdForPromotion(promotionId);
-
-        // Get timezone
-        String timezone = timezoneRepository.getTimezoneByLocation(locationId);
-
-        // Convert
-        OffsetDateTime startUtc = TimezoneConverter
-            .toUtc(request.newStartDate(), timezone);
-        OffsetDateTime endUtc = TimezoneConverter
-            .toUtc(request.newEndDate(), timezone);
-
-        // Update
-        repository.updatePromotionDates(promotionId, startUtc, endUtc);
-
-        log.info("Updated dates for promotion {}", promotionId);
+    public List<ActivePromotionDTO> getActiveForLocation(Long locationId) {
+        return executeList("sp_get_active_system_discounts_for_location",
+                "activeDiscounts", ACTIVE_MAPPER, Map.of("p_location_id", locationId));
     }
 }
 
 
+
+
+package hlt.promo.engine.repository;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.RowMapper;
+import org.springframework.jdbc.core.SqlParameter;
+import org.springframework.jdbc.core.simple.SimpleJdbcCall;
+
+import java.sql.Connection;
+import java.util.Collections;
+import java.util.List;
+import java.util.Map;
+
+public abstract class BasePromoDao {
+
+    @Autowired
+    protected JdbcTemplate jdbcTemplate;
+
+    protected SimpleJdbcCall call(String procName) {
+        String schemaName = jdbcTemplate.execute((Connection conn) -> conn.getCatalog());
+        return new SimpleJdbcCall(jdbcTemplate)
+                .withCatalogName(schemaName)
+                .withProcedureName(procName);
+    }
+
+    /** Proc with no result set (update-style). */
+    protected void executeVoid(String procName, Map<String, Object> params) {
+        call(procName).execute(params);
+    }
+
+    /** Proc with a single OUT param. */
+    protected <T> T executeReturnOut(String procName, String outParamName,
+                                     Class<T> type, Map<String, Object> params) {
+        Map<String, Object> out = call(procName).execute(params);
+        return type.cast(out.get(outParamName));
+    }
+
+    /** Proc returning a named result set, mapped by an explicit RowMapper. */
+    @SuppressWarnings("unchecked")
+    protected <T> List<T> executeList(String procName, String resultSetName,
+                                      RowMapper<T> mapper, Map<String, Object> params) {
+        Map<String, Object> out = call(procName)
+                .returningResultSet(resultSetName, mapper)
+                .execute(params);
+
+        List<T> rows = (List<T>) out.get(resultSetName);
+        return rows != null ? rows : Collections.emptyList();
+    }
+
+    protected <T> T executeSingle(String procName, String resultSetName,
+                                  RowMapper<T> mapper, Map<String, Object> params) {
+        List<T> rows = executeList(procName, resultSetName, mapper, params);
+        return rows.isEmpty() ? null : rows.get(0);
+    }
+}
 
