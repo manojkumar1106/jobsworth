@@ -1,59 +1,55 @@
-package hlt.promo.engine.dto;
+package hlt.promo.engine.service;
 
-import hlt.promo.engine.enums.DiscountType;
-import jakarta.validation.constraints.*;
-import lombok.Data;
+import hlt.promo.engine.dao.SystemDiscountDao;
+import hlt.promo.engine.dto.CreateSystemDiscountRequest;
+import hlt.promo.engine.exception.ValidationException;
+import hlt.promo.engine.repository.TimezoneRepository;
+import hlt.promo.engine.util.TimezoneConverter;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
-import java.math.BigDecimal;
-import java.time.LocalDateTime;
+@Service
+public class SystemDiscountServiceNew {
 
-@Data
-public class CreateSystemDiscountRequest {
+    private static final Logger log = LoggerFactory.getLogger(SystemDiscountServiceNew.class);
 
-    private String sessionKey;   // set by controller from JWT, not sent by client
+    private final SystemDiscountDao systemDiscountDao;
+    private final TimezoneRepository timezoneRepository;
 
-    @NotNull
-    private Long locationId;
+    public SystemDiscountServiceNew(SystemDiscountDao systemDiscountDao,
+                                    TimezoneRepository timezoneRepository) {
+        this.systemDiscountDao = systemDiscountDao;
+        this.timezoneRepository = timezoneRepository;
+    }
 
-    @NotNull
-    private Long amenityId;
+    // ------------------------------------------------------------
+    // CREATE SYSTEM DISCOUNT
+    // ------------------------------------------------------------
+    @Transactional
+    public Integer createSystemDiscount(CreateSystemDiscountRequest request) {
 
-    @NotBlank @Size(max = 254)
-    private String title;
+        // Validate
+        if (!request.getStartDate().isBefore(request.getEndDate())) {
+            throw new ValidationException("Start date must be before end date");
+        }
 
-    @Size(max = 254)
-    private String displayName;
+        // Get timezone for this location
+        String timezone = timezoneRepository.getTimezoneByLocation(request.getLocationId());
 
-    @Size(max = 254)
-    private String discountDescription;
+        // Convert local -> UTC (proc columns are plain DATETIME)
+        request.setStartDate(
+                TimezoneConverter.toUtc(request.getStartDate(), timezone).toLocalDateTime());
+        request.setEndDate(
+                TimezoneConverter.toUtc(request.getEndDate(), timezone).toLocalDateTime());
 
-    @NotNull
-    private DiscountType discountType;
+        // Create
+        Integer id = systemDiscountDao.createSystemDiscount(request);
 
-    @NotNull @DecimalMin("0.01")
-    private BigDecimal amount;
+        log.info("Created system discount id={} location={} amenity={}",
+                id, request.getLocationId(), request.getAmenityId());
 
-    private Integer minQuantity;
-    private String userType;
-    private Boolean channelPos;
-    private Boolean channelWeb;
-
-    @NotNull
-    private LocalDateTime startDate;
-
-    @NotNull
-    private LocalDateTime endDate;
-
-    private Boolean stackable;
-
-    @Size(max = 254)
-    private String stackGroup;
-
-    private Integer priority;
-    private Boolean managerApprovalRequired;
-
-    @Size(max = 254)
-    private String icon;
-
-    private String systemDiscountStatus;
+        return id;
+    }
 }
