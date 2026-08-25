@@ -1,4 +1,65 @@
-protected Map<String, Object> executeSingle(String procName, Map<String, Object> params) {
-    List<Map<String, Object>> rows = executeList(procName, params);
-    return rows.isEmpty() ? null : rows.get(0);
+package hlt.promo.engine.dao;
+
+import org.springframework.stereotype.Repository;
+
+import java.util.List;
+import java.util.Map;
+
+@Repository
+public class RuleDefinitionDao extends BaseDao {
+
+    public List<Map<String, Object>> getAllRuleDefinitions(String sessionKey) {
+        return executeList("usp_Get_Rule_Definitions", Map.of("p_Session_Key", sessionKey));
+    }
 }
+package hlt.promo.engine.service;
+
+import hlt.promo.engine.dao.RuleDefinitionDao;
+import lombok.RequiredArgsConstructor;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+
+import java.util.List;
+import java.util.Map;
+
+@Service
+@RequiredArgsConstructor
+public class RuleDefinitionServiceNew {
+
+    private static final Logger log = LoggerFactory.getLogger(RuleDefinitionServiceNew.class);
+
+    private final RuleDefinitionDao ruleDefinitionDao;
+
+    public List<Map<String, Object>> getAllRuleDefinitions(String sessionKey) {
+        log.info("Fetching rule definitions for session: {}", sessionKey);
+        return ruleDefinitionDao.getAllRuleDefinitions(sessionKey);
+    }
+}
+
+
+
+package hlt.promo.engine.controller;
+
+import hlt.promo.engine.dto.ApiResponse;
+import hlt.promo.engine.service.RuleDefinitionServiceNew;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.web.bind.annotation.*;
+
+import java.util.List;
+import java.util.Map;
+
+@RestController
+@RequestMapping("/api/rule-definitions")
+public class RuleDefinitionController {
+
+    @Autowired
+    RuleDefinitionServiceNew ruleDefinitionServiceNew;
+
+    @GetMapping
+    public ApiResponse<?> getAll(@RequestParam String sessionKey) {
+        List<Map<String, Object>> ruleDefinitions = ruleDefinitionServiceNew.getAllRuleDefinitions(sessionKey);
+        return ApiResponse.success("Rule Definitions Fetched", ruleDefinitions);
+    }
+}
+
