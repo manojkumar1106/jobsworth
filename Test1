@@ -1,8 +1,7 @@
 package hlt.promo.engine.service;
 
-import hlt.promo.engine.dao.PromotionDao;
 import hlt.promo.engine.dao.SystemDiscountDao;
-import hlt.promo.engine.dto.CreatePromotionRequest;
+import hlt.promo.engine.dto.CreateSystemDiscountRequest;
 import hlt.promo.engine.exception.ValidationException;
 import hlt.promo.engine.util.TimezoneConverter;
 import lombok.RequiredArgsConstructor;
@@ -13,50 +12,53 @@ import org.springframework.transaction.annotation.Transactional;
 
 @Service
 @RequiredArgsConstructor
-public class PromotionServiceNew {
+public class SystemDiscountServiceNew {
 
-    private static final Logger log = LoggerFactory.getLogger(PromotionServiceNew.class);
+    private static final Logger log = LoggerFactory.getLogger(SystemDiscountServiceNew.class);
 
     private final SystemDiscountDao systemDiscountDao;
-    private final PromotionDao promotionDao;
 
     @Transactional
-    public void createPromotion(CreatePromotionRequest request) {
+    public Integer createSystemDiscount(CreateSystemDiscountRequest request) {
 
-        if (!request.getStartDate().isBefore(request.getEndDate())) {
-            throw new ValidationException("Start date must be before end date");
-        }
+        convertDatesToUtcIfPresent(request);
 
-        String timezone = systemDiscountDao.getTimezoneByLocation(
-                request.getSessionKey(), request.getLocationId().intValue());
+        Integer id = systemDiscountDao.createSystemDiscount(request);
 
-        request.setStartDate(
-                TimezoneConverter.toUtc(request.getStartDate(), timezone).toLocalDateTime());
-        request.setEndDate(
-                TimezoneConverter.toUtc(request.getEndDate(), timezone).toLocalDateTime());
+        log.info("System discount created id={} location={} amenity={}",
+                id, request.getLocationId(), request.getAmenityId());
 
-        promotionDao.createPromotion(request);
-
-        log.info("Promotion created location={} amenity={} promoCode={}",
-                request.getLocationId(), request.getAmenityId(), request.getPromoCode());
+        return id;
     }
 
     @Transactional
-    public void updatePromotion(CreatePromotionRequest request) {
+    public void updateSystemDiscount(CreateSystemDiscountRequest request) {
 
-        // Bean Validation (OnUpdate group) already guarantees promotionId is present here.
-        // Everything else is optional — only validate ordering if both dates were sent.
+        // Unlike Promotion's update, this proc has no COALESCE fallback — every field
+        // sent is written as-is, and locationId/amenityId being omitted will null those
+        // columns. Bean Validation (OnUpdate group) only guarantees systemDiscountId,
+        // title, discountType, amount and systemDiscountStatus are present.
+
+        convertDatesToUtcIfPresent(request);
+
+        systemDiscountDao.updateSystemDiscount(request);
+
+        log.info("System discount updated id={} location={} amenity={}",
+                request.getSystemDiscountId(), request.getLocationId(), request.getAmenityId());
+    }
+
+    private void convertDatesToUtcIfPresent(CreateSystemDiscountRequest request) {
+
         if (request.getStartDate() != null && request.getEndDate() != null
                 && !request.getStartDate().isBefore(request.getEndDate())) {
             throw new ValidationException("Start date must be before end date");
         }
 
-        // Only need timezone conversion if a date is actually being updated
         if (request.getStartDate() != null || request.getEndDate() != null) {
 
             if (request.getLocationId() == null) {
                 throw new ValidationException(
-                        "locationId is required to resolve timezone when updating start/end date");
+                        "locationId is required to resolve timezone when setting start/end date");
             }
 
             String timezone = systemDiscountDao.getTimezoneByLocation(
@@ -71,21 +73,14 @@ public class PromotionServiceNew {
                         TimezoneConverter.toUtc(request.getEndDate(), timezone).toLocalDateTime());
             }
         }
-
-        promotionDao.updatePromotion(request);
-
-        log.info("Promotion updated promotionId={} location={} amenity={} promoCode={}",
-                request.getPromotionId(), request.getLocationId(),
-                request.getAmenityId(), request.getPromoCode());
     }
 }
 
 
 
-
 package hlt.promo.engine.dao;
 
-import hlt.promo.engine.dto.CreatePromotionRequest;
+import hlt.promo.engine.dto.CreateSystemDiscountRequest;
 import org.springframework.stereotype.Repository;
 
 import java.sql.Timestamp;
@@ -93,100 +88,105 @@ import java.util.HashMap;
 import java.util.Map;
 
 @Repository
-public class PromotionDao extends BaseDao {
+public class SystemDiscountDao extends BaseDao {
 
-    public void createPromotion(CreatePromotionRequest req) {
+    public String getTimezoneByLocation(String sessionKey, Integer locationId) {
         Map<String, Object> params = new HashMap<>();
-        params.put("p_Session_Key", req.getSessionKey());
-        params.put("p_Location_Id", req.getLocationId());
-        params.put("p_Amenity_Id", req.getAmenityId());
-        params.put("p_Amount", req.getAmount());
-        params.put("p_Apply_Full_Cart", req.getApplyFullCart());
-        params.put("p_Category", req.getCategory());
-        params.put("p_Channel_POS", req.getChannelPos());
-        params.put("p_Channel_Web", req.getChannelWeb());
-        params.put("p_Discount_Type", req.getDiscountType() != null ? req.getDiscountType().name() : null);
-        params.put("p_Display_Message", req.getDisplayMessage());
-        params.put("p_End_Date", req.getEndDate() != null ? Timestamp.valueOf(req.getEndDate()) : null);
-        params.put("p_Max_Selectable_Per_Group", req.getMaxSelectablePerGroup());
-        params.put("p_Priority", req.getPriority());
-        params.put("p_Promo_Code", req.getPromoCode());
-        params.put("p_Redemption_Method", req.getRedemptionMethod());
-        params.put("p_Selection_Group", req.getSelectionGroup());
-        params.put("p_Stack_Group", req.getStackGroup());
-        params.put("p_Stackable", req.getStackable());
-        params.put("p_Start_Date", req.getStartDate() != null ? Timestamp.valueOf(req.getStartDate()) : null);
-        params.put("p_Promo_Status", req.getPromoStatus());
-        params.put("p_Ticket_Type", req.getTicketType());
-        params.put("p_Usage_Limit", req.getUsageLimit());
-        params.put("p_User_Type", req.getUserType());
-        params.put("p_Max_Usage_Per_Customer", req.getMaxUsagePerCustomer());
-
-        executeVoid("usp_Create_Promotion", params);
+        params.put("p_Session_Key", sessionKey);
+        params.put("p_Location_Id", locationId);
+        return executeReturnType("usp_Get_Location_Discount", "p_Timezone", params);
     }
 
-    public void updatePromotion(CreatePromotionRequest req) {
+    public Integer createSystemDiscount(CreateSystemDiscountRequest req) {
+        Map<String, Object> params = buildParams(req);
+        return executeReturnId("usp_Create_System_Discount", "p_System_Discount_Id", params);
+    }
+
+    public void updateSystemDiscount(CreateSystemDiscountRequest req) {
+        Map<String, Object> params = buildParams(req);
+        params.put("p_System_Discount_Id", req.getSystemDiscountId());
+        executeVoid("usp_Update_System_Discount", params);
+    }
+
+    private Map<String, Object> buildParams(CreateSystemDiscountRequest req) {
         Map<String, Object> params = new HashMap<>();
         params.put("p_Session_Key", req.getSessionKey());
-        params.put("p_Promotion_Id", req.getPromotionId());
         params.put("p_Location_Id", req.getLocationId());
         params.put("p_Amenity_Id", req.getAmenityId());
+        params.put("p_Title", req.getTitle());
+        params.put("p_Display_Name", req.getDisplayName());
+        params.put("p_Discount_Description", req.getDiscountDescription());
+        params.put("p_Discount_Type", req.getDiscountType() != null ? req.getDiscountType().name() : null);
         params.put("p_Amount", req.getAmount());
-        params.put("p_Apply_Full_Cart", req.getApplyFullCart());
-        params.put("p_Category", req.getCategory());
+        params.put("p_Min_Quantity", req.getMinQuantity());
+        params.put("p_User_Type", req.getUserType());
         params.put("p_Channel_POS", req.getChannelPos());
         params.put("p_Channel_Web", req.getChannelWeb());
-        params.put("p_Discount_Type", req.getDiscountType() != null ? req.getDiscountType().name() : null);
-        params.put("p_Display_Message", req.getDisplayMessage());
-        params.put("p_End_Date", req.getEndDate() != null ? Timestamp.valueOf(req.getEndDate()) : null);
-        params.put("p_Max_Selectable_Per_Group", req.getMaxSelectablePerGroup());
-        params.put("p_Priority", req.getPriority());
-        params.put("p_Promo_Code", req.getPromoCode());
-        params.put("p_Redemption_Method", req.getRedemptionMethod());
-        params.put("p_Selection_Group", req.getSelectionGroup());
-        params.put("p_Stack_Group", req.getStackGroup());
-        params.put("p_Stackable", req.getStackable());
         params.put("p_Start_Date", req.getStartDate() != null ? Timestamp.valueOf(req.getStartDate()) : null);
-        params.put("p_Promo_Status", req.getPromoStatus());
-        params.put("p_Ticket_Type", req.getTicketType());
-        params.put("p_Usage_Limit", req.getUsageLimit());
-        params.put("p_User_Type", req.getUserType());
-        params.put("p_Max_Usage_Per_Customer", req.getMaxUsagePerCustomer());
-
-        executeVoid("usp_Update_Promotion", params);
+        params.put("p_End_Date", req.getEndDate() != null ? Timestamp.valueOf(req.getEndDate()) : null);
+        params.put("p_Stackable", req.getStackable());
+        params.put("p_Stack_Group", req.getStackGroup());
+        params.put("p_Priority", req.getPriority());
+        params.put("p_Manager_Approval_Required", req.getManagerApprovalRequired());
+        params.put("p_Icon", req.getIcon());
+        params.put("p_System_Discount_Status", req.getSystemDiscountStatus());
+        return params;
     }
 }
+
 
 
 
 package hlt.promo.engine.controller;
 
 import hlt.promo.engine.dto.ApiResponse;
-import hlt.promo.engine.dto.CreatePromotionRequest;
-import hlt.promo.engine.service.PromotionServiceNew;
+import hlt.promo.engine.dto.CreateSystemDiscountRequest;
+import hlt.promo.engine.enums.DiscountStatus;
+import hlt.promo.engine.model.SystemDiscount;
+import hlt.promo.engine.service.SystemDiscountServiceNew;
 import hlt.promo.engine.validation.OnCreate;
 import hlt.promo.engine.validation.OnUpdate;
-import org.springframework.beans.factory.annotation.Autowired;
+import lombok.RequiredArgsConstructor;
+import org.springframework.http.ResponseEntity;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.List;
+
 @RestController
-@RequestMapping("/api/promotions")
-public class PromotionController {
+@RequestMapping("/api/system-discounts")
+@RequiredArgsConstructor
+public class SystemDiscountController {
 
-    @Autowired
-    PromotionServiceNew promotionServiceNew;
+    private final SystemDiscountServiceNew systemDiscountService;
 
+    // Create — status in body decides DRAFT or PUBLISHED
     @PostMapping("/create")
-    public ApiResponse<?> create(@RequestBody @Validated(OnCreate.class) CreatePromotionRequest promotion) {
-        promotionServiceNew.createPromotion(promotion);
-        return ApiResponse.success("Promotion Created", null);
+    public ApiResponse<?> create(@RequestBody @Validated(OnCreate.class) CreateSystemDiscountRequest discount,
+                                  @RequestParam(defaultValue = "ADMIN") String createdBy) {
+        return ApiResponse.success("System Discount Created",
+                systemDiscountService.createSystemDiscount(discount));
     }
 
+    // Update — same DTO, OnUpdate group requires systemDiscountId + the same
+    // required-on-create fields (title, discountType, amount, systemDiscountStatus)
     @PutMapping("/update")
-    public ApiResponse<?> update(@RequestBody @Validated(OnUpdate.class) CreatePromotionRequest promotion) {
-        promotionServiceNew.updatePromotion(promotion);
-        return ApiResponse.success("Promotion Updated", null);
+    public ApiResponse<?> update(@RequestBody @Validated(OnUpdate.class) CreateSystemDiscountRequest discount,
+                                  @RequestParam(defaultValue = "ADMIN") String updatedBy) {
+        systemDiscountService.updateSystemDiscount(discount);
+        return ApiResponse.success("System Discount Updated", null);
+    }
+
+    // Get all
+    @GetMapping
+    public ResponseEntity<List<SystemDiscount>> getAll() {
+        return ResponseEntity.ok(systemDiscountService.getAll());
+    }
+
+    // Get by status
+    @GetMapping("/status/{status}")
+    public ResponseEntity<List<SystemDiscount>> getByStatus(@PathVariable DiscountStatus status) {
+        return ResponseEntity.ok(systemDiscountService.getByStatus(status));
     }
 }
 
