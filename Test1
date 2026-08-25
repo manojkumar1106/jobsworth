@@ -15,3 +15,74 @@ GetMapping
         List<PromotionResponse> promotions = promotionServiceNew.getAllPromotions(sessionKey);
         return ApiResponse.success("Promotions Fetched", promotions);
     }
+
+
+
+
+package hlt.promo.engine.dao;
+
+import org.springframework.stereotype.Repository;
+
+import java.util.List;
+import java.util.Map;
+
+@Repository
+public class PromotionDao extends BaseDao {
+
+    public List<Map<String, Object>> getAllPromotions(String sessionKey) {
+        return executeList("usp_Get_Promotions", Map.of("p_Session_Key", sessionKey));
+    }
+}
+
+
+
+package hlt.promo.engine.service;
+
+import hlt.promo.engine.dao.PromotionDao;
+import lombok.RequiredArgsConstructor;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+
+import java.util.List;
+import java.util.Map;
+
+@Service
+@RequiredArgsConstructor
+public class PromotionServiceNew {
+
+    private static final Logger log = LoggerFactory.getLogger(PromotionServiceNew.class);
+
+    private final PromotionDao promotionDao;
+
+    public List<Map<String, Object>> getAllPromotions(String sessionKey) {
+        log.info("Fetching promotions for session: {}", sessionKey);
+        return promotionDao.getAllPromotions(sessionKey);
+    }
+}
+
+
+package hlt.promo.engine.controller;
+
+import hlt.promo.engine.dto.ApiResponse;
+import hlt.promo.engine.service.PromotionServiceNew;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.web.bind.annotation.*;
+
+import java.util.List;
+import java.util.Map;
+
+@RestController
+@RequestMapping("/api/promotions")
+public class PromotionController {
+
+    @Autowired
+    PromotionServiceNew promotionServiceNew;
+
+    @GetMapping
+    public ApiResponse<?> getAll(@RequestParam String sessionKey) {
+        List<Map<String, Object>> promotions = promotionServiceNew.getAllPromotions(sessionKey);
+        return ApiResponse.success("Promotions Fetched", promotions);
+    }
+}
+
