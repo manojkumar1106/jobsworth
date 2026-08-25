@@ -1,28 +1,8 @@
-   public List<PromotionResponse> getAllPromotions(String sessionKey) {
-        Map<String, Object> params = new HashMap<>();
-        params.put("p_Session_Key", sessionKey);
-        List<Map<String, Object>> rows = executeList("usp_Get_Promotions", params);
-        return rows.stream().map(this::mapRow).collect(Collectors.toList());
-    }
-
-
-public List<PromotionResponse> getAllPromotions(String sessionKey) {
-        return promotionDao.getAllPromotions(sessionKey);
-    }
-
-GetMapping
-    public ApiResponse<?> getAll(@RequestParam String sessionKey) {
-        List<PromotionResponse> promotions = promotionServiceNew.getAllPromotions(sessionKey);
-        return ApiResponse.success("Promotions Fetched", promotions);
-    }
-
-
-
-
 package hlt.promo.engine.dao;
 
 import org.springframework.stereotype.Repository;
 
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -32,7 +12,15 @@ public class PromotionDao extends BaseDao {
     public List<Map<String, Object>> getAllPromotions(String sessionKey) {
         return executeList("usp_Get_Promotions", Map.of("p_Session_Key", sessionKey));
     }
+
+    public Map<String, Object> getPromotionByCode(String sessionKey, String promoCode) {
+        Map<String, Object> params = new HashMap<>();
+        params.put("p_Session_Key", sessionKey);
+        params.put("p_Promo_Code", promoCode);
+        return executeSingle("usp_Get_Promotion_By_Code", params);
+    }
 }
+
 
 
 
@@ -59,6 +47,11 @@ public class PromotionServiceNew {
         log.info("Fetching promotions for session: {}", sessionKey);
         return promotionDao.getAllPromotions(sessionKey);
     }
+
+    public Map<String, Object> getPromotionByCode(String sessionKey, String promoCode) {
+        log.info("Fetching promotion by code: {}", promoCode);
+        return promotionDao.getPromotionByCode(sessionKey, promoCode);
+    }
 }
 
 
@@ -83,6 +76,12 @@ public class PromotionController {
     public ApiResponse<?> getAll(@RequestParam String sessionKey) {
         List<Map<String, Object>> promotions = promotionServiceNew.getAllPromotions(sessionKey);
         return ApiResponse.success("Promotions Fetched", promotions);
+    }
+
+    @GetMapping("/code/{promoCode}")
+    public ApiResponse<?> getByCode(@PathVariable String promoCode, @RequestParam String sessionKey) {
+        Map<String, Object> promotion = promotionServiceNew.getPromotionByCode(sessionKey, promoCode);
+        return ApiResponse.success("Promotion Fetched", promotion);
     }
 }
 
