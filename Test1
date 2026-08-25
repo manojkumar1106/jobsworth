@@ -1,65 +1,119 @@
-package hlt.promo.engine.dao;
+CREATE DEFINER=`snd-tkts-bi-v1-AnywhereRole`@`%` PROCEDURE `usp_Increment_Promo_Usage`(
+    IN p_Session_Key VARCHAR(36)
+  , IN p_Promo_Code VARCHAR(254)
+  , IN p_Customer_Id VARCHAR(254)
+  , OUT p_Result_Code INT
+)
+BEGIN
+    DECLARE Log_Details VARCHAR(4000) DEFAULT '';
+    SET p_Result_Code = -1;
 
-import org.springframework.stereotype.Repository;
+    SELECT GloLocFun.Global_Location_Function_Id
+    INTO @Location_Function_Id
+    FROM Shared.Global_Location_Function GloLocFun
+    JOIN Shared.Function_Type_Permission FunTypPer
+    ON GloLocFun.Function_Type_Id = FunTypPer.Function_Type_Id
+    WHERE FunTypPer.Proc_Name = 'usp_Increment_Promo_Usage';
 
-import java.util.List;
-import java.util.Map;
+    TRY_PROC: BEGIN
+    DECLARE EXIT HANDLER FOR SQLEXCEPTION BEGIN GET DIAGNOSTICS CONDITION 1 Log_Details = message_text; ROLLBACK; END;
 
-@Repository
-public class RuleDefinitionDao extends BaseDao {
+    SET p_Result_Code = -2;
+    CALL client1.sys_Validate_Session(p_Session_Key, @Valid);
+    IF @Valid = FALSE THEN LEAVE TRY_PROC; END IF;
 
-    public List<Map<String, Object>> getAllRuleDefinitions(String sessionKey) {
-        return executeList("usp_Get_Rule_Definitions", Map.of("p_Session_Key", sessionKey));
-    }
-}
-package hlt.promo.engine.service;
+    SET p_Result_Code = -3;
+    CALL client1.sys_Check_Session_Permission(p_Session_Key, @Location_Function_Id, 'usp_Increment_Promo_Usage', @Granted);
+    IF @Granted = FALSE THEN LEAVE TRY_PROC; END IF;
 
-import hlt.promo.engine.dao.RuleDefinitionDao;
-import lombok.RequiredArgsConstructor;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.stereotype.Service;
+    SET p_Result_Code = -4;
+    IF p_Promo_Code IS NULL OR TRIM(p_Promo_Code) = '' THEN SET Log_Details = 'p_Promo_Code'; LEAVE TRY_PROC; END IF;
+    IF p_Customer_Id IS NULL OR TRIM(p_Customer_Id) = '' THEN SET Log_Details = 'p_Customer_Id'; LEAVE TRY_PROC; END IF;
 
-import java.util.List;
-import java.util.Map;
+    SET p_Result_Code = -1;
 
-@Service
-@RequiredArgsConstructor
-public class RuleDefinitionServiceNew {
+    IF EXISTS (
+        SELECT 1 FROM client1.Promo_Usage
+        WHERE Promo_Code = p_Promo_Code AND Customer_Id = p_Customer_Id
+        LIMIT 1
+    ) THEN
+        UPDATE client1.Promo_Usage
+        SET Usage_Count = Usage_Count + 1,
+            Last_Used_At = UTC_TIMESTAMP()
+        WHERE Promo_Code = p_Promo_Code AND Customer_Id = p_Customer_Id;
+    ELSE
+        INSERT INTO client1.Promo_Usage (
+            Customer_Id, Promo_Code, Usage_Count, First_Used_At, Last_Used_At
+        ) VALUES (
+            p_Customer_Id, p_Promo_Code, 1, UTC_TIMESTAMP(), UTC_TIMESTAMP()
+        );
+    END IF;
 
-    private static final Logger log = LoggerFactory.getLogger(RuleDefinitionServiceNew.class);
-
-    private final RuleDefinitionDao ruleDefinitionDao;
-
-    public List<Map<String, Object>> getAllRuleDefinitions(String sessionKey) {
-        log.info("Fetching rule definitions for session: {}", sessionKey);
-        return ruleDefinitionDao.getAllRuleDefinitions(sessionKey);
-    }
-}
+    SET p_Result_Code = 1;
+    END TRY_PROC;
+    CALL client1.usp_Insert_User_Session_Log (p_Session_Key, 'usp_Increment_Promo_Usage', p_Result_Code, Log_Details);
+END
 
 
+===
+CREATE DEFINER=`snd-tkts-bi-v1-AnywhereRole`@`%` PROCEDURE `usp_Get_Promo_Usage_Summary`(
+    IN p_Session_Key VARCHAR(36)
+  , IN p_Promo_Code VARCHAR(254)
+  , IN p_Customer_Id VARCHAR(254)
+  , OUT p_Total_Usage INT
+  , OUT p_Customer_Usage INT
+  , OUT p_Result_Code INT
+)
+BEGIN
+    DECLARE Log_Details VARCHAR(4000) DEFAULT '';
+    SET p_Result_Code = -1;
+    SET p_Total_Usage = 0;
+    SET p_Customer_Usage = 0;
 
-package hlt.promo.engine.controller;
+    SELECT GloLocFun.Global_Location_Function_Id
+    INTO @Location_Function_Id
+    FROM Shared.Global_Location_Function GloLocFun
+    JOIN Shared.Function_Type_Permission FunTypPer
+    ON GloLocFun.Function_Type_Id = FunTypPer.Function_Type_Id
+    WHERE FunTypPer.Proc_Name = 'usp_Get_Promo_Usage_Summary';
 
-import hlt.promo.engine.dto.ApiResponse;
-import hlt.promo.engine.service.RuleDefinitionServiceNew;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.web.bind.annotation.*;
+    TRY_PROC: BEGIN
+    DECLARE EXIT HANDLER FOR SQLEXCEPTION BEGIN GET DIAGNOSTICS CONDITION 1 Log_Details = message_text; ROLLBACK; END;
 
-import java.util.List;
-import java.util.Map;
+    SET p_Result_Code = -2;
+    CALL client1.sys_Validate_Session(p_Session_Key, @Valid);
+    IF @Valid = FALSE THEN LEAVE TRY_PROC; END IF;
 
-@RestController
-@RequestMapping("/api/rule-definitions")
-public class RuleDefinitionController {
+    SET p_Result_Code = -3;
+    CALL client1.sys_Check_Session_Permission(p_Session_Key, @Location_Function_Id, 'usp_Get_Promo_Usage_Summary', @Granted);
+    IF @Granted = FALSE THEN LEAVE TRY_PROC; END IF;
 
-    @Autowired
-    RuleDefinitionServiceNew ruleDefinitionServiceNew;
+    SET p_Result_Code = -4;
+    IF p_Promo_Code IS NULL OR TRIM(p_Promo_Code) = '' THEN SET Log_Details = 'p_Promo_Code'; LEAVE TRY_PROC; END IF;
+    IF p_Customer_Id IS NULL OR TRIM(p_Customer_Id) = '' THEN SET Log_Details = 'p_Customer_Id'; LEAVE TRY_PROC; END IF;
 
-    @GetMapping
-    public ApiResponse<?> getAll(@RequestParam String sessionKey) {
-        List<Map<String, Object>> ruleDefinitions = ruleDefinitionServiceNew.getAllRuleDefinitions(sessionKey);
-        return ApiResponse.success("Rule Definitions Fetched", ruleDefinitions);
-    }
-}
+    SET p_Result_Code = -1;
+
+    SELECT COALESCE(SUM(Usage_Count), 0)
+    INTO p_Total_Usage
+    FROM client1.Promo_Usage
+    WHERE Promo_Code = p_Promo_Code;
+
+    SELECT COALESCE(Usage_Count, 0)
+    INTO p_Customer_Usage
+    FROM client1.Promo_Usage
+    WHERE Promo_Code = p_Promo_Code AND Customer_Id = p_Customer_Id
+    LIMIT 1;
+
+    SET p_Result_Code = 1;
+    END TRY_PROC;
+    CALL client1.usp_Insert_User_Session_Log (p_Session_Key, 'usp_Get_Promo_Usage_Summary', p_Result_Code, Log_Details);
+END
+
+
+
+One proc to record a promo usage. Given a session key, a promo code, and a customer ID: if that customer has already used this promo before, add 1 to their usage count. If they haven’t, create a new usage record starting at 1. Either way, it should just work in one call — no separate “check first, then decide” step.
+
+2. One proc to get the total times a promo has been used, across everyone. Given a session key and a promo code, add up the usage counts from every customer who’s used it and return that total. If nobody’s used it yet, return 0, not nothing.
+
 
