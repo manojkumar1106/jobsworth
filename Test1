@@ -1,52 +1,17 @@
-package hlt.promo.engine.dao;
-
-import hlt.promo.engine.dto.CreatePromotionRequest;
-import org.springframework.stereotype.Repository;
-
-import java.sql.Timestamp;
-import java.util.HashMap;
-import java.util.Map;
-
-@Repository
-public class PromotionDao extends BaseDao {
-
-    public void createPromotion(CreatePromotionRequest req) {
-        Map<String, Object> params = buildParams(req);
-        executeVoid("usp_Create_Promotion", params);
-    }
-
-    public void updatePromotion(CreatePromotionRequest req) {
-        Map<String, Object> params = buildParams(req);
-        params.put("p_Promotion_Id", req.getPromotionId());
-        executeVoid("usp_Update_Promotion", params);
-    }
-
-    private Map<String, Object> buildParams(CreatePromotionRequest req) {
+   public List<PromotionResponse> getAllPromotions(String sessionKey) {
         Map<String, Object> params = new HashMap<>();
-        params.put("p_Session_Key", req.getSessionKey());
-        params.put("p_Location_Id", req.getLocationId());
-        params.put("p_Amenity_Id", req.getAmenityId());
-        params.put("p_Amount", req.getAmount());
-        params.put("p_Apply_Full_Cart", req.getApplyFullCart());
-        params.put("p_Category", req.getCategory());
-        params.put("p_Channel_POS", req.getChannelPos());
-        params.put("p_Channel_Web", req.getChannelWeb());
-        params.put("p_Discount_Type", req.getDiscountType() != null ? req.getDiscountType().name() : null);
-        params.put("p_Display_Message", req.getDisplayMessage());
-        params.put("p_End_Date", req.getEndDate() != null ? Timestamp.valueOf(req.getEndDate()) : null);
-        params.put("p_Max_Selectable_Per_Group", req.getMaxSelectablePerGroup());
-        params.put("p_Priority", req.getPriority());
-        params.put("p_Promo_Code", req.getPromoCode());
-        params.put("p_Redemption_Method", req.getRedemptionMethod());
-        params.put("p_Selection_Group", req.getSelectionGroup());
-        params.put("p_Stack_Group", req.getStackGroup());
-        params.put("p_Stackable", req.getStackable());
-        params.put("p_Start_Date", req.getStartDate() != null ? Timestamp.valueOf(req.getStartDate()) : null);
-        params.put("p_Promo_Status", req.getPromoStatus());
-        params.put("p_Ticket_Type", req.getTicketType());
-        params.put("p_Usage_Limit", req.getUsageLimit());
-        params.put("p_User_Type", req.getUserType());
-        params.put("p_Max_Usage_Per_Customer", req.getMaxUsagePerCustomer());
-        return params;
+        params.put("p_Session_Key", sessionKey);
+        List<Map<String, Object>> rows = executeList("usp_Get_Promotions", params);
+        return rows.stream().map(this::mapRow).collect(Collectors.toList());
     }
-}
+
+
+public List<PromotionResponse> getAllPromotions(String sessionKey) {
+        return promotionDao.getAllPromotions(sessionKey);
+    }
+
+GetMapping
+    public ApiResponse<?> getAll(@RequestParam String sessionKey) {
+        List<PromotionResponse> promotions = promotionServiceNew.getAllPromotions(sessionKey);
+        return ApiResponse.success("Promotions Fetched", promotions);
+    }
