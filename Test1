@@ -1,56 +1,84 @@
-package hlt.promo.engine.dto;
+package hlt.promo.engine.service;
 
-import com.fasterxml.jackson.annotation.JsonIgnore;
-import hlt.promo.engine.enums.DiscountType;
-import jakarta.validation.constraints.*;
-import lombok.Data;
+import hlt.promo.engine.dao.PromotionDao;
+import hlt.promo.engine.dao.SystemDiscountDao;
+import hlt.promo.engine.dto.CreatePromotionRequest;
+import hlt.promo.engine.exception.ValidationException;
+import hlt.promo.engine.util.TimezoneConverter;
+import lombok.RequiredArgsConstructor;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
-import java.math.BigDecimal;
-import java.time.LocalDateTime;
+@Service
+@RequiredArgsConstructor
+public class PromotionServiceNew {
 
-@Data
-public class CreatePromotionRequest {
+    private static final Logger log = LoggerFactory.getLogger(PromotionServiceNew.class);
 
-    @JsonIgnore
-    private String sessionKey;
+    private final SystemDiscountDao systemDiscountDao;
+    private final PromotionDao promotionDao;
 
-    @NotNull private Long locationId;
-    @NotNull private Long amenityId;
+    @Transactional
+    public void createPromotion(CreatePromotionRequest request) {
 
-    @NotNull @DecimalMin("0.01")
-    private BigDecimal amount;
+        if (!request.getStartDate().isBefore(request.getEndDate())) {
+            throw new ValidationException("Start date must be before end date");
+        }
 
-    @NotNull private DiscountType discountType;          // FLAT | PERCENTAGE
+        String timezone = systemDiscountDao.getTimezoneByLocation(
+                request.getSessionKey(), request.getLocationId().intValue());
 
-    @NotBlank @Size(max = 254)
-    private String displayMessage;
+        request.setStartDate(
+                TimezoneConverter.toUtc(request.getStartDate(), timezone).toLocalDateTime());
+        request.setEndDate(
+                TimezoneConverter.toUtc(request.getEndDate(), timezone).toLocalDateTime());
 
-    private Boolean applyFullCart;
-    @Size(max = 254) private String category;
-    @Size(max = 254) private String ticketType;
+        promotionDao.createPromotion(request);
 
-    private Boolean channelPos;
-    private Boolean channelWeb;
+        log.info("Promotion created location={} amenity={} promoCode={}",
+                request.getLocationId(), request.getAmenityId(), request.getPromoCode());
+    }
 
-    @NotNull private LocalDateTime startDate;
-    @NotNull private LocalDateTime endDate;
+    @Transactional
+    public void updatePromotion(CreatePromotionRequest request) {
 
-    private Integer maxSelectablePerGroup;
-    private Integer priority;
+        // Bean Validation (OnUpdate group) already guarantees promotionId is present here.
+        // Everything else is optional — only validate ordering if both dates were sent.
+        if (request.getStartDate() != null && request.getEndDate() != null
+                && !request.getStartDate().isBefore(request.getEndDate())) {
+            throw new ValidationException("Start date must be before end date");
+        }
 
-    @Size(max = 254) private String promoCode;
-    private String redemptionMethod;                      // AUTOMATIC | PROMO_CODE
-    @Size(max = 254) private String selectionGroup;
-    @Size(max = 254) private String stackGroup;
-    private Boolean stackable;
+        // Only need timezone conversion if a date is actually being updated
+        if (request.getStartDate() != null || request.getEndDate() != null) {
 
-    private String promoStatus;                           // DRAFT | INACTIVE | PUBLISHED
+            if (request.getLocationId() == null) {
+                throw new ValidationException(
+                        "locationId is required to resolve timezone when updating start/end date");
+            }
 
-    @NotNull private Integer usageLimit;
-    @NotNull private String userType;                     // ALL_USERS | MEMBERS | NON_MEMBERS
-    private Integer maxUsagePerCustomer;
+            String timezone = systemDiscountDao.getTimezoneByLocation(
+                    request.getSessionKey(), request.getLocationId().intValue());
+
+            if (request.getStartDate() != null) {
+                request.setStartDate(
+                        TimezoneConverter.toUtc(request.getStartDate(), timezone).toLocalDateTime());
+            }
+            if (request.getEndDate() != null) {
+                request.setEndDate(
+                        TimezoneConverter.toUtc(request.getEndDate(), timezone).toLocalDateTime());
+            }
+        }
+
+        promotionDao.updatePromotion(request);
+
+        log.info("Promotion updated promotionId={} location={} amenity={} promoCode={}",
+                request.getPromotionId(), request.getLocationId(),
+                request.getAmenityId(), request.getPromoCode());
+    }
 }
-
 
 
 
@@ -66,13 +94,6 @@ import java.util.Map;
 
 @Repository
 public class PromotionDao extends BaseDao {
-
-    public String getTimezoneByLocation(String sessionKey, Integer locationId) {
-        Map<String, Object> params = new HashMap<>();
-        params.put("p_Session_Key", sessionKey);
-        params.put("p_Location_Id", locationId);
-        return executeReturnType("usp_Get_Location_Discount", "p_Timezone", params);
-    }
 
     public void createPromotion(CreatePromotionRequest req) {
         Map<String, Object> params = new HashMap<>();
@@ -103,82 +124,69 @@ public class PromotionDao extends BaseDao {
 
         executeVoid("usp_Create_Promotion", params);
     }
-}
 
+    public void updatePromotion(CreatePromotionRequest req) {
+        Map<String, Object> params = new HashMap<>();
+        params.put("p_Session_Key", req.getSessionKey());
+        params.put("p_Promotion_Id", req.getPromotionId());
+        params.put("p_Location_Id", req.getLocationId());
+        params.put("p_Amenity_Id", req.getAmenityId());
+        params.put("p_Amount", req.getAmount());
+        params.put("p_Apply_Full_Cart", req.getApplyFullCart());
+        params.put("p_Category", req.getCategory());
+        params.put("p_Channel_POS", req.getChannelPos());
+        params.put("p_Channel_Web", req.getChannelWeb());
+        params.put("p_Discount_Type", req.getDiscountType() != null ? req.getDiscountType().name() : null);
+        params.put("p_Display_Message", req.getDisplayMessage());
+        params.put("p_End_Date", req.getEndDate() != null ? Timestamp.valueOf(req.getEndDate()) : null);
+        params.put("p_Max_Selectable_Per_Group", req.getMaxSelectablePerGroup());
+        params.put("p_Priority", req.getPriority());
+        params.put("p_Promo_Code", req.getPromoCode());
+        params.put("p_Redemption_Method", req.getRedemptionMethod());
+        params.put("p_Selection_Group", req.getSelectionGroup());
+        params.put("p_Stack_Group", req.getStackGroup());
+        params.put("p_Stackable", req.getStackable());
+        params.put("p_Start_Date", req.getStartDate() != null ? Timestamp.valueOf(req.getStartDate()) : null);
+        params.put("p_Promo_Status", req.getPromoStatus());
+        params.put("p_Ticket_Type", req.getTicketType());
+        params.put("p_Usage_Limit", req.getUsageLimit());
+        params.put("p_User_Type", req.getUserType());
+        params.put("p_Max_Usage_Per_Customer", req.getMaxUsagePerCustomer());
 
-
-
-
-package hlt.promo.engine.service;
-
-import hlt.promo.engine.dao.PromotionDao;
-import hlt.promo.engine.dto.CreatePromotionRequest;
-import hlt.promo.engine.exception.ValidationException;
-import hlt.promo.engine.util.TimezoneConverter;
-import lombok.RequiredArgsConstructor;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
-
-@Service
-@RequiredArgsConstructor
-public class PromotionServiceNew {
-
-    private static final Logger log = LoggerFactory.getLogger(PromotionServiceNew.class);
-
-    private final PromotionDao promotionDao;
-
-    @Transactional
-    public void createPromotion(CreatePromotionRequest request) {
-
-        if (!request.getStartDate().isBefore(request.getEndDate())) {
-            throw new ValidationException("Start date must be before end date");
-        }
-
-        String timezone = promotionDao.getTimezoneByLocation(
-                request.getSessionKey(), request.getLocationId().intValue());
-
-        request.setStartDate(
-                TimezoneConverter.toUtc(request.getStartDate(), timezone).toLocalDateTime());
-        request.setEndDate(
-                TimezoneConverter.toUtc(request.getEndDate(), timezone).toLocalDateTime());
-
-        promotionDao.createPromotion(request);
-
-        log.info("Promotion created location={} amenity={} promoCode={}",
-                request.getLocationId(), request.getAmenityId(), request.getPromoCode());
+        executeVoid("usp_Update_Promotion", params);
     }
 }
 
 
 
+package hlt.promo.engine.controller;
 
+import hlt.promo.engine.dto.ApiResponse;
+import hlt.promo.engine.dto.CreatePromotionRequest;
+import hlt.promo.engine.service.PromotionServiceNew;
+import hlt.promo.engine.validation.OnCreate;
+import hlt.promo.engine.validation.OnUpdate;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.validation.annotation.Validated;
+import org.springframework.web.bind.annotation.*;
 
-POST /api/promotions/create
+@RestController
+@RequestMapping("/api/promotions")
+public class PromotionController {
 
-{
-  "locationId": 1,
-  "amenityId": 219,
-  "amount": 15.00,
-  "discountType": "PERCENTAGE",
-  "displayMessage": "15% off your cart this September",
-  "applyFullCart": true,
-  "channelPos": true,
-  "channelWeb": true,
-  "startDate": "2026-09-01T09:00:00",
-  "endDate": "2026-09-30T17:00:00",
-  "maxSelectablePerGroup": 1,
-  "priority": 1,
-  "promoCode": "SEPT15",
-  "redemptionMethod": "PROMO_CODE",
-  "selectionGroup": "SEPT_CAMPAIGN",
-  "stackGroup": null,
-  "stackable": false,
-  "promoStatus": "DRAFT",
-  "usageLimit": 100,
-  "userType": "ALL_USERS",
-  "maxUsagePerCustomer": 1
+    @Autowired
+    PromotionServiceNew promotionServiceNew;
+
+    @PostMapping("/create")
+    public ApiResponse<?> create(@RequestBody @Validated(OnCreate.class) CreatePromotionRequest promotion) {
+        promotionServiceNew.createPromotion(promotion);
+        return ApiResponse.success("Promotion Created", null);
+    }
+
+    @PutMapping("/update")
+    public ApiResponse<?> update(@RequestBody @Validated(OnUpdate.class) CreatePromotionRequest promotion) {
+        promotionServiceNew.updatePromotion(promotion);
+        return ApiResponse.success("Promotion Updated", null);
+    }
 }
-
 
