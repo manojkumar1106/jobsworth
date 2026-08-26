@@ -67,31 +67,23 @@ public void usePromo(String sessionKey, String promoCode, String customerId,
     params.put("p_Customer_Id", customerId);
     params.put("p_Usage_Limit", usageLimit);
     params.put("p_Max_Usage_Per_Customer", maxUsagePerCustomer);
-    executeVoid("usp_Use_Promo", params);
+    executeVoid("usp_Use_Promo", @Transactional
+public void incrementUsage(String sessionKey, Promotion promo, String customerId) {
+    try {
+        promoUsageDao.usePromo(
+                sessionKey,
+                promo.getPromoCode(),
+                customerId,
+                promo.getUsageLimit(),
+                promo.getMaxUsagePerCustomer()
+        );
+        log.info("Usage incremented promo={} customer={}", promo.getPromoCode(), customerId);
+    } catch (PromoLimitExceededException e) {
+        log.error("Usage increment blocked — limit reached: {}", e.getMessage());
+        throw e;
+    } catch (Exception e) {
+        log.error("Usage increment failed: {}", e.getMessage());
+    }
 }
-
-    // ---- persist updated rule definition via proc ----
-    Map<String, Object> savedRow = ruleDefinitionDao.createRuleDefinition(current, sessionKey);
-    RuleDefinition saved = mapper.convertValue(savedRow, RuleDefinition.class);
-
-    // ---- record rollback history entry ----
-    RuleHistory rollback = new RuleHistory();
-    rollback.setRuleName(ruleName);
-    rollback.setRuleType(current.getRuleType());
-    rollback.setReferenceId(current.getReferenceId());
-    rollback.setDrlContent(history.getDrlContent());
-    rollback.setVersion(nextVersion);
-    rollback.setAction("ROLLBACK_TO_V" + toVersion);
-    rollback.setChangedBy(changedBy);
-    ruleHistoryDao.createRuleHistory(rollback, sessionKey);
-
-    getEngineService().reloadRules();
-    log.info("Rule {} rolled back to v{}, now v{}", ruleName, toVersion, nextVersion);
-    return saved;
-}
-params);
-}
-
-
 
 
