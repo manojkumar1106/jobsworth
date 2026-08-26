@@ -215,20 +215,20 @@ public List<Map<String, Object>> getAllPromotions(String sessionKey) {
 
     Map<Long, String> timezoneCache = new HashMap<>();
     for (Map<String, Object> promo : promotions) {
-        Object locationIdObj = promo.get("locationId");
+        Object locationIdObj = promo.get("Location_Id");
         if (locationIdObj == null) continue;
         Long locationId = ((Number) locationIdObj).longValue();
 
         String timezone = timezoneCache.computeIfAbsent(locationId,
                 id -> systemDiscountDao.getTimezoneByLocation(sessionKey, id.intValue()));
 
-        if (promo.get("startDate") != null) {
-            promo.put("startDate",
-                    TimezoneConverter.toLocal(asLocalDateTime(promo.get("startDate")), timezone));
+        if (promo.get("Start_Date") != null) {
+            promo.put("Start_Date",
+                    TimezoneConverter.toLocal(asLocalDateTime(promo.get("Start_Date")), timezone));
         }
-        if (promo.get("endDate") != null) {
-            promo.put("endDate",
-                    TimezoneConverter.toLocal(asLocalDateTime(promo.get("endDate")), timezone));
+        if (promo.get("End_Date") != null) {
+            promo.put("End_Date",
+                    TimezoneConverter.toLocal(asLocalDateTime(promo.get("End_Date")), timezone));
         }
     }
     return promotions;
@@ -238,26 +238,18 @@ public Map<String, Object> getPromotionByCode(String sessionKey, String promoCod
     log.info("Fetching promotion by code: {}", promoCode);
     Map<String, Object> promo = promotionDao.getPromotionByCode(sessionKey, promoCode);
 
-    if (promo != null && promo.get("locationId") != null) {
+    if (promo != null && promo.get("Location_Id") != null) {
         String timezone = systemDiscountDao.getTimezoneByLocation(
-                sessionKey, ((Number) promo.get("locationId")).intValue());
+                sessionKey, ((Number) promo.get("Location_Id")).intValue());
 
-        if (promo.get("startDate") != null) {
-            promo.put("startDate",
-                    TimezoneConverter.toLocal(asLocalDateTime(promo.get("startDate")), timezone));
+        if (promo.get("Start_Date") != null) {
+            promo.put("Start_Date",
+                    TimezoneConverter.toLocal(asLocalDateTime(promo.get("Start_Date")), timezone));
         }
-        if (promo.get("endDate") != null) {
-            promo.put("endDate",
-                    TimezoneConverter.toLocal(asLocalDateTime(promo.get("endDate")), timezone));
+        if (promo.get("End_Date") != null) {
+            promo.put("End_Date",
+                    TimezoneConverter.toLocal(asLocalDateTime(promo.get("End_Date")), timezone));
         }
     }
     return promo;
 }
-
-private LocalDateTime asLocalDateTime(Object value) {
-    if (value == null) return null;
-    if (value instanceof LocalDateTime) return (LocalDateTime) value;
-    if (value instanceof Timestamp) return ((Timestamp) value).toLocalDateTime();
-    return null;
-}
-
