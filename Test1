@@ -360,139 +360,56 @@ public class RuleDefinitionServiceNew {
 
 
 
+@Transactional
+public RuleDefinition rollbackRule(String ruleName, Integer toVersion, String changedBy, String sessionKey) {
 
-CREATE DEFINER=`snd-tkts-bi-v1-AnywhereRole`@`%` PROCEDURE `usp_Create_Rule_History`(
-    IN  p_Session_Key   VARCHAR(36)
-  , IN  p_Rule_Name     VARCHAR(254)
-  , IN  p_Rule_Type     VARCHAR(254)
-  , IN  p_Reference_Id  BIGINT
-  , IN  p_DRL_Content   LONGTEXT
-  , IN  p_Version       INT
-  , IN  p_Action_Taken  VARCHAR(50)
-  , IN  p_Changed_By    VARCHAR(254)
-  , OUT p_Rule_History_Id BIGINT
-  , OUT p_Result_Code   INT
-)
-BEGIN
-    DECLARE Log_Details VARCHAR(4000) DEFAULT '';
-    SET p_Result_Code = -1;
-    SET p_Rule_History_Id = NULL;
+    ObjectMapper mapper = new ObjectMapper();
+    mapper.registerModule(new JavaTimeModule());
 
-    SELECT GloLocFun.Global_Location_Function_Id
-    INTO @Location_Function_Id
-    FROM Shared.Global_Location_Function GloLocFun
-    JOIN Shared.Function_Type_Permission FunTypPer
-      ON GloLocFun.Function_Type_Id = FunTypPer.Function_Type_Id
-    WHERE FunTypPer.Proc_Name = 'usp_Create_Rule_History';
+    // ---- fetch history row for the target version ----
+    Map<String, Object> historyRow = ruleHistoryDao.findByRuleNameAndVersion(ruleName, toVersion, sessionKey);
+    if (historyRow == null) {
+        throw new RuntimeException("Version " + toVersion + " not found for rule " + ruleName);
+    }
+    RuleHistory history = mapper.convertValue(historyRow, RuleHistory.class);
 
-    TRY_PROC: BEGIN
-        DECLARE EXIT HANDLER FOR SQLEXCEPTION BEGIN GET DIAGNOSTICS CONDITION 1 Log_Details = message_text; ROLLBACK; END;
+    // ---- fetch current active rule definition ----
+    Map<String, Object> currentRow = ruleDefinitionDao.findByRuleNameAndActiveTrue(ruleName, sessionKey);
+    if (currentRow == null) {
+        throw new RuntimeException("Active rule not found: " + ruleName);
+    }
+    RuleDefinition current = mapper.convertValue(currentRow, RuleDefinition.class);
 
-        SET p_Result_Code = -2;
-        CALL client1.sys_Validate_Session(p_Session_Key, @Valid);
-        IF @Valid = FALSE THEN LEAVE TRY_PROC; END IF;
+    // ---- save history entry for the rollback action ----
+    saveHistory(current, "ROLLED_BACK", changedBy, sessionKey);
 
-        SET p_Result_Code = -3;
-        CALL client1.sys_Check_Session_Permission(p_Session_Key, @Location_Function_Id, 'usp_Create_Rule_History', @Granted);
-        IF @Granted = FALSE THEN LEAVE TRY_PROC; END IF;
+    int nextVersion = current.getVersion() + 1;
+    current.setDrlContent(history.getDrlContent());
+    current.setVersion(nextVersion);
+    current.setCreatedBy(changedBy);
 
-        SET p_Result_Code = -4;
-        IF p_Rule_Type IS NULL OR TRIM(p_Rule_Type) = '' THEN SET Log_Details = 'p_Rule_Type'; LEAVE TRY_PROC; END IF;
-        IF p_Reference_Id IS NULL THEN SET Log_Details = 'p_Reference_Id'; LEAVE TRY_PROC; END IF;
-        IF p_DRL_Content IS NULL OR TRIM(p_DRL_Content) = '' THEN SET Log_Details = 'p_DRL_Content'; LEAVE TRY_PROC; END IF;
-        IF p_Action_Taken IS NULL OR TRIM(p_Action_Taken) = '' THEN SET Log_Details = 'p_Action_Taken'; LEAVE TRY_PROC; END IF;
+    // ---- persist updated rule definition via proc ----
+    Map<String, Object> savedRow = ruleDefinitionDao.createRuleDefinition(current, sessionKey);
+    RuleDefinition saved = mapper.convertValue(savedRow, RuleDefinition.class);
 
-        SET p_Result_Code = -1;
+    // ---- record rollback history entry ----
+    RuleHistory rollback = new RuleHistory();
+    rollback.setRuleName(ruleName);
+    rollback.setRuleType(current.getRuleType());
+    rollback.setReferenceId(current.getReferenceId());
+    rollback.setDrlContent(history.getDrlContent());
+    rollback.setVersion(nextVersion);
+    rollback.setAction("ROLLBACK_TO_V" + toVersion);
+    rollback.setChangedBy(changedBy);
+    ruleHistoryDao.createRuleHistory(rollback, sessionKey);
 
-        START TRANSACTION;
-
-        INSERT INTO client1.Rule_History
-            (Rule_Name, Rule_Type, Reference_Id, DRL_Content, Version, Action_Taken, Changed_By, Changed_At)
-        VALUES
-            (p_Rule_Name, p_Rule_Type, p_Reference_Id, p_DRL_Content, p_Version, p_Action_Taken,
-             COALESCE(p_Changed_By, 'SYSTEM'), NOW());
-
-        SET p_Rule_History_Id = LAST_INSERT_ID();
-
-        COMMIT;
-
-        SET p_Result_Code = 1;
-    END TRY_PROC;
-
-    CALL client1.usp_Insert_User_Session_Log(p_Session_Key, 'usp_Create_Rule_History', p_Result_Code, Log_Details);
-
-    SELECT * FROM client1.Rule_History WHERE Rule_History_Id = p_Rule_History_Id;
-END
-
-
-
-public Map<String, Object> createRuleHistory(RuleHistory h, String sessionKey) {
-    Map<String, Object> params = new HashMap<>();
-    params.put("p_Session_Key", sessionKey);
-    params.put("p_Rule_Name", h.getRuleName());
-    params.put("p_Rule_Type", h.getRuleType());
-    params.put("p_Reference_Id", h.getReferenceId());
-    params.put("p_DRL_Content", h.getDrlContent());
-    params.put("p_Version", h.getVersion());
-    params.put("p_Action_Taken", h.getAction());
-    params.put("p_Changed_By", h.getChangedBy());
-    return executeSingle(procName: "usp_Create_Rule_History", params);
+    getEngineService().reloadRules();
+    log.info("Rule {} rolled back to v{}, now v{}", ruleName, toVersion, nextVersion);
+    return saved;
+}
+params);
 }
 
 
 
-CREATE DEFINER=`snd-tkts-bi-v1-AnywhereRole`@`%` PROCEDURE `usp_Get_Rule_Definition_By_Type_And_Reference`(
-    IN  p_Session_Key   VARCHAR(36)
-  , IN  p_Rule_Type     VARCHAR(254)
-  , IN  p_Reference_Id  BIGINT
-  , OUT p_Result_Code   INT
-)
-BEGIN
-    DECLARE Log_Details VARCHAR(4000) DEFAULT '';
-    SET p_Result_Code = -1;
-
-    SELECT GloLocFun.Global_Location_Function_Id
-    INTO @Location_Function_Id
-    FROM Shared.Global_Location_Function GloLocFun
-    JOIN Shared.Function_Type_Permission FunTypPer
-      ON GloLocFun.Function_Type_Id = FunTypPer.Function_Type_Id
-    WHERE FunTypPer.Proc_Name = 'usp_Get_Rule_Definition_By_Type_And_Reference';
-
-    TRY_PROC: BEGIN
-        DECLARE EXIT HANDLER FOR SQLEXCEPTION BEGIN GET DIAGNOSTICS CONDITION 1 Log_Details = message_text; ROLLBACK; END;
-
-        SET p_Result_Code = -2;
-        CALL client1.sys_Validate_Session(p_Session_Key, @Valid);
-        IF @Valid = FALSE THEN LEAVE TRY_PROC; END IF;
-
-        SET p_Result_Code = -3;
-        CALL client1.sys_Check_Session_Permission(p_Session_Key, @Location_Function_Id, 'usp_Get_Rule_Definition_By_Type_And_Reference', @Granted);
-        IF @Granted = FALSE THEN LEAVE TRY_PROC; END IF;
-
-        SET p_Result_Code = -4;
-        IF p_Rule_Type IS NULL OR TRIM(p_Rule_Type) = '' THEN SET Log_Details = 'p_Rule_Type'; LEAVE TRY_PROC; END IF;
-        IF p_Reference_Id IS NULL THEN SET Log_Details = 'p_Reference_Id'; LEAVE TRY_PROC; END IF;
-
-        SET p_Result_Code = 1;
-    END TRY_PROC;
-
-    CALL client1.usp_Insert_User_Session_Log(p_Session_Key, 'usp_Get_Rule_Definition_By_Type_And_Reference', p_Result_Code, Log_Details);
-
-    SELECT *
-    FROM client1.Rule_Definitions
-    WHERE Rule_Type = p_Rule_Type
-      AND Reference_Id = p_Reference_Id
-      AND Is_Active = 1
-    ORDER BY Version DESC
-    LIMIT 1;
-END
-
-
-public Map<String, Object> findByRuleTypeAndReferenceIdAndActiveTrue(String ruleType, Long referenceId, String sessionKey) {
-    Map<String, Object> params = new HashMap<>();
-    params.put("p_Session_Key", sessionKey);
-    params.put("p_Rule_Type", ruleType);
-    params.put("p_Reference_Id", referenceId);
-    return executeSingle(procName: "usp_Get_Rule_Definition_By_Type_And_Reference", params);
-}
 
