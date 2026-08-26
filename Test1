@@ -262,3 +262,102 @@ private LocalDateTime asLocalDateTime(Object value) {
 }
 
 
+
+package hlt.promo.engine.dto;
+
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
+import lombok.Data;
+
+@Data
+public class CreateRuleDefinitionRequest {
+
+    private String sessionKey;
+
+    @NotNull
+    private Integer referenceId;
+
+    @NotBlank
+    private String ruleName;
+
+    @NotBlank
+    private String ruleType;
+
+    // p_DRL_Content is LONGTEXT and not null-checked in the proc's own
+    // validation block shown, so left optional here — tighten if it should
+    // actually be required.
+    private String drlContent;
+}
+
+
+
+
+package hlt.promo.engine.dao;
+
+import hlt.promo.engine.dto.CreateRuleDefinitionRequest;
+import org.springframework.stereotype.Repository;
+
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+@Repository
+public class RuleDefinitionDao extends BaseDao {
+
+    public List<Map<String, Object>> getAllRuleDefinitions(String sessionKey) {
+        return executeList("usp_Get_Rule_Definitions", Map.of("p_Session_Key", sessionKey));
+    }
+
+    // Proc does SELECT * ... WHERE Rule_Definitions_Id = LAST_INSERT_VALUE()
+    // after the insert, so this needs executeSingle (like PromotionDao.createPromotion),
+    // not executeVoid — the created row comes back as a result set, not just an OUT param.
+    public Map<String, Object> createRuleDefinition(CreateRuleDefinitionRequest req) {
+        Map<String, Object> params = new HashMap<>();
+        params.put("p_Session_Key", req.getSessionKey());
+        params.put("p_Reference_Id", req.getReferenceId());
+        params.put("p_Rule_Name", req.getRuleName());
+        params.put("p_Rule_Type", req.getRuleType());
+        params.put("p_DRL_Content", req.getDrlContent());
+        return executeSingle("usp_Create_Rule_Definitions", params);
+    }
+}
+
+
+
+
+package hlt.promo.engine.service;
+
+import hlt.promo.engine.dao.RuleDefinitionDao;
+import hlt.promo.engine.dto.CreateRuleDefinitionRequest;
+import lombok.RequiredArgsConstructor;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.util.List;
+import java.util.Map;
+
+@Service
+@RequiredArgsConstructor
+public class RuleDefinitionServiceNew {
+
+    private static final Logger log = LoggerFactory.getLogger(RuleDefinitionServiceNew.class);
+
+    private final RuleDefinitionDao ruleDefinitionDao;
+
+    public List<Map<String, Object>> getAllRuleDefinitions(String sessionKey) {
+        log.info("Fetching rule definitions for session: {}", sessionKey);
+        return ruleDefinitionDao.getAllRuleDefinitions(sessionKey);
+    }
+
+    @Transactional
+    public Map<String, Object> createRuleDefinition(CreateRuleDefinitionRequest request) {
+        Map<String, Object> created = ruleDefinitionDao.createRuleDefinition(request);
+        log.info("Rule definition created ruleName={} referenceId={}",
+                request.getRuleName(), request.getReferenceId());
+        return created;
+    }
+}
+
+
