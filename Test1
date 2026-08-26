@@ -253,3 +253,12 @@ public Map<String, Object> getPromotionByCode(String sessionKey, String promoCod
     }
     return promo;
 }
+
+private LocalDateTime asLocalDateTime(Object value) {
+    if (value == null) return null;
+    if (value instanceof LocalDateTime) return (LocalDateTime) value;
+    if (value instanceof Timestamp) return ((Timestamp) value).toLocalDateTime();
+    return null;
+}
+
+
