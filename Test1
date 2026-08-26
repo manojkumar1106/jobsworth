@@ -205,3 +205,59 @@ BEGIN
     CALL client1.usp_Insert_User_Session_Log (p_Session_Key, 'usp_Use_Promo', p_Result_Code, Log_Details);
 END
 
+
+
+
+
+public List<Map<String, Object>> getAllPromotions(String sessionKey) {
+    log.info("Fetching promotions for session: {}", sessionKey);
+    List<Map<String, Object>> promotions = promotionDao.getAllPromotions(sessionKey);
+
+    Map<Long, String> timezoneCache = new HashMap<>();
+    for (Map<String, Object> promo : promotions) {
+        Object locationIdObj = promo.get("locationId");
+        if (locationIdObj == null) continue;
+        Long locationId = ((Number) locationIdObj).longValue();
+
+        String timezone = timezoneCache.computeIfAbsent(locationId,
+                id -> systemDiscountDao.getTimezoneByLocation(sessionKey, id.intValue()));
+
+        if (promo.get("startDate") != null) {
+            promo.put("startDate",
+                    TimezoneConverter.toLocal(asLocalDateTime(promo.get("startDate")), timezone));
+        }
+        if (promo.get("endDate") != null) {
+            promo.put("endDate",
+                    TimezoneConverter.toLocal(asLocalDateTime(promo.get("endDate")), timezone));
+        }
+    }
+    return promotions;
+}
+
+public Map<String, Object> getPromotionByCode(String sessionKey, String promoCode) {
+    log.info("Fetching promotion by code: {}", promoCode);
+    Map<String, Object> promo = promotionDao.getPromotionByCode(sessionKey, promoCode);
+
+    if (promo != null && promo.get("locationId") != null) {
+        String timezone = systemDiscountDao.getTimezoneByLocation(
+                sessionKey, ((Number) promo.get("locationId")).intValue());
+
+        if (promo.get("startDate") != null) {
+            promo.put("startDate",
+                    TimezoneConverter.toLocal(asLocalDateTime(promo.get("startDate")), timezone));
+        }
+        if (promo.get("endDate") != null) {
+            promo.put("endDate",
+                    TimezoneConverter.toLocal(asLocalDateTime(promo.get("endDate")), timezone));
+        }
+    }
+    return promo;
+}
+
+private LocalDateTime asLocalDateTime(Object value) {
+    if (value == null) return null;
+    if (value instanceof LocalDateTime) return (LocalDateTime) value;
+    if (value instanceof Timestamp) return ((Timestamp) value).toLocalDateTime();
+    return null;
+}
+
