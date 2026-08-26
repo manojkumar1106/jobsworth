@@ -117,3 +117,91 @@ One proc to record a promo usage. Given a session key, a promo code, and a custo
 2. One proc to get the total times a promo has been used, across everyone. Given a session key and a promo code, add up the usage counts from every customer who’s used it and return that total. If nobody’s used it yet, return 0, not nothing.
 
 
+
+
+CREATE DEFINER=`snd-tkts-bi-v1-AnywhereRole`@`%` PROCEDURE `usp_Use_Promo`(
+    IN p_Session_Key VARCHAR(36)
+  , IN p_Promo_Code VARCHAR(254)
+  , IN p_Customer_Id VARCHAR(254)
+  , IN p_Usage_Limit INT           -- from Promotion.Usage_Limit, NULL = unlimited
+  , IN p_Max_Usage_Per_Customer INT -- from Promotion.Max_Usage_Per_Customer, NULL = unlimited
+  , OUT p_Result_Code INT
+)
+BEGIN
+    DECLARE Log_Details VARCHAR(4000) DEFAULT '';
+    DECLARE v_Total_Usage INT DEFAULT 0;
+    DECLARE v_Customer_Usage INT DEFAULT 0;
+    SET p_Result_Code = -1;
+
+    SELECT GloLocFun.Global_Location_Function_Id
+    INTO @Location_Function_Id
+    FROM Shared.Global_Location_Function GloLocFun
+    JOIN Shared.Function_Type_Permission FunTypPer
+    ON GloLocFun.Function_Type_Id = FunTypPer.Function_Type_Id
+    WHERE FunTypPer.Proc_Name = 'usp_Use_Promo';
+
+    TRY_PROC: BEGIN
+    DECLARE EXIT HANDLER FOR SQLEXCEPTION BEGIN GET DIAGNOSTICS CONDITION 1 Log_Details = message_text; ROLLBACK; END;
+
+    SET p_Result_Code = -2;
+    CALL client1.sys_Validate_Session(p_Session_Key, @Valid);
+    IF @Valid = FALSE THEN LEAVE TRY_PROC; END IF;
+
+    SET p_Result_Code = -3;
+    CALL client1.sys_Check_Session_Permission(p_Session_Key, @Location_Function_Id, 'usp_Use_Promo', @Granted);
+    IF @Granted = FALSE THEN LEAVE TRY_PROC; END IF;
+
+    SET p_Result_Code = -4;
+    IF p_Promo_Code IS NULL OR TRIM(p_Promo_Code) = '' THEN SET Log_Details = 'p_Promo_Code'; LEAVE TRY_PROC; END IF;
+    IF p_Customer_Id IS NULL OR TRIM(p_Customer_Id) = '' THEN SET Log_Details = 'p_Customer_Id'; LEAVE TRY_PROC; END IF;
+
+    -- Lock the row (if it exists) so a concurrent request can't read a stale
+    -- count between our check and our increment.
+    SELECT Usage_Count INTO v_Customer_Usage
+    FROM client1.Promo_Usage
+    WHERE Promo_Code = p_Promo_Code AND Customer_Id = p_Customer_Id
+    FOR UPDATE;
+
+    SELECT COALESCE(SUM(Usage_Count), 0) INTO v_Total_Usage
+    FROM client1.Promo_Usage
+    WHERE Promo_Code = p_Promo_Code
+    FOR UPDATE;
+
+    -- -5: global limit reached
+    IF p_Usage_Limit IS NOT NULL AND v_Total_Usage >= p_Usage_Limit THEN
+        SET Log_Details = CONCAT('Promo [', p_Promo_Code, '] reached global limit of ', p_Usage_Limit);
+        SET p_Result_Code = -5;
+        LEAVE TRY_PROC;
+    END IF;
+
+    -- -6: per-customer limit reached
+    IF p_Max_Usage_Per_Customer IS NOT NULL AND v_Customer_Usage >= p_Max_Usage_Per_Customer THEN
+        SET Log_Details = CONCAT('Customer already used promo [', p_Promo_Code, '] ', v_Customer_Usage,
+                                  ' time(s). Max allowed: ', p_Max_Usage_Per_Customer);
+        SET p_Result_Code = -6;
+        LEAVE TRY_PROC;
+    END IF;
+
+    -- Passed both checks — increment now, in the same transaction.
+    IF EXISTS (
+        SELECT 1 FROM client1.Promo_Usage
+        WHERE Promo_Code = p_Promo_Code AND Customer_Id = p_Customer_Id
+        LIMIT 1
+    ) THEN
+        UPDATE client1.Promo_Usage
+        SET Usage_Count = Usage_Count + 1,
+            Last_Used_At = UTC_TIMESTAMP()
+        WHERE Promo_Code = p_Promo_Code AND Customer_Id = p_Customer_Id;
+    ELSE
+        INSERT INTO client1.Promo_Usage (
+            Customer_Id, Promo_Code, Usage_Count, First_Used_At, Last_Used_At
+        ) VALUES (
+            p_Customer_Id, p_Promo_Code, 1, UTC_TIMESTAMP(), UTC_TIMESTAMP()
+        );
+    END IF;
+
+    SET p_Result_Code = 1;
+    END TRY_PROC;
+    CALL client1.usp_Insert_User_Session_Log (p_Session_Key, 'usp_Use_Promo', p_Result_Code, Log_Details);
+END
+
