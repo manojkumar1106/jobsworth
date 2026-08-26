@@ -458,3 +458,79 @@ public class DroolsEngineService {
     }
 }
 
+
+package hlt.promo.engine.model;
+
+import ...
+
+@Entity
+@Table(name = "Rule_Definitions")
+@Data
+@NoArgsConstructor
+@AllArgsConstructor
+public class RuleDefinition {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    @Column(name = "Rule_Definitions_Id")
+    @JsonProperty("Rule_Definitions_Id")
+    private Long id;
+
+    // e.g. PROMO_SAVE10, SYSDISCOUNT_LOYALTY
+    @Column(name = "Rule_Name")
+    @JsonProperty("Rule_Name")
+    private String ruleName;
+
+    // PROMOTION or SYSTEM_DISCOUNT
+    @Column(name = "Rule_Type")
+    @JsonProperty("Rule_Type")
+    private String ruleType;
+
+    // FK to promotion.id or system_discount.id
+    @Column(name = "Reference_Id")
+    @JsonProperty("Reference_Id")
+    private Long referenceId;
+
+    @Lob
+    @Column(name = "DRL_Content", columnDefinition = "CLOB")
+    @JsonProperty("DRL_Content")
+    private String drlContent;
+
+    @Column(name = "Version")
+    @JsonProperty("Version")
+    private Integer version = 1;
+
+    @Column(name = "Is_Active")
+    @JsonProperty("Is_Active")
+    private boolean active = true;
+
+    @Column(name = "Created_By")
+    @JsonProperty("Created_By")
+    private String createdBy;
+
+    @Column(name = "Created_At")
+    @JsonProperty("Created_At")
+    private LocalDateTime createdAt;
+
+    @Column(name = "Updated_At")
+    @JsonProperty("Updated_At")
+    private LocalDateTime updatedAt;
+
+    @Column(name = "Is_Removed")
+    @JsonProperty("Is_Removed")
+    private Boolean isRemoved = false;
+
+    @PrePersist
+    public void prePersist() {
+        createdAt = LocalDateTime.now();
+        updatedAt = LocalDateTime.now();
+        if (version == null) version = 1;
+    }
+
+    @PreUpdate
+    public void preUpdate() {
+        updatedAt = LocalDateTime.now();
+    }
+}
+
+
