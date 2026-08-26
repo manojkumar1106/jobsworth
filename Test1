@@ -1,19 +1,23 @@
-CREATE DEFINER=`snd-tkts-bi-v1-AnywhereRole`@`%` PROCEDURE `usp_Increment_Promo_Usage`(
+CREATE DEFINER=`snd-tkts-bi-v1-AnywhereRole`@`%` PROCEDURE `usp_Get_Promo_Usage_Summary`(
     IN p_Session_Key VARCHAR(36)
   , IN p_Promo_Code VARCHAR(254)
   , IN p_Customer_Id VARCHAR(254)
+  , OUT p_Total_Usage INT
+  , OUT p_Customer_Usage INT
   , OUT p_Result_Code INT
 )
 BEGIN
     DECLARE Log_Details VARCHAR(4000) DEFAULT '';
     SET p_Result_Code = -1;
+    SET p_Total_Usage = 0;
+    SET p_Customer_Usage = 0;
 
     SELECT GloLocFun.Global_Location_Function_Id
     INTO @Location_Function_Id
     FROM Shared.Global_Location_Function GloLocFun
     JOIN Shared.Function_Type_Permission FunTypPer
     ON GloLocFun.Function_Type_Id = FunTypPer.Function_Type_Id
-    WHERE FunTypPer.Proc_Name = 'usp_Increment_Promo_Usage';
+    WHERE FunTypPer.Proc_Name = 'usp_Get_Promo_Usage_Summary';
 
     TRY_PROC: BEGIN
     DECLARE EXIT HANDLER FOR SQLEXCEPTION BEGIN GET DIAGNOSTICS CONDITION 1 Log_Details = message_text; ROLLBACK; END;
@@ -23,7 +27,7 @@ BEGIN
     IF @Valid = FALSE THEN LEAVE TRY_PROC; END IF;
 
     SET p_Result_Code = -3;
-    CALL client1.sys_Check_Session_Permission(p_Session_Key, @Location_Function_Id, 'usp_Increment_Promo_Usage', @Granted);
+    CALL client1.sys_Check_Session_Permission(p_Session_Key, @Location_Function_Id, 'usp_Get_Promo_Usage_Summary', @Granted);
     IF @Granted = FALSE THEN LEAVE TRY_PROC; END IF;
 
     SET p_Result_Code = -4;
@@ -32,26 +36,20 @@ BEGIN
 
     SET p_Result_Code = -1;
 
-    IF EXISTS (
-        SELECT 1 FROM client1.Promo_Usage
-        WHERE Promo_Code = p_Promo_Code AND Customer_Id = p_Customer_Id
-        LIMIT 1
-    ) THEN
-        UPDATE client1.Promo_Usage
-        SET Usage_Count = Usage_Count + 1,
-            Last_Used_At = UTC_TIMESTAMP()
-        WHERE Promo_Code = p_Promo_Code AND Customer_Id = p_Customer_Id;
-    ELSE
-        INSERT INTO client1.Promo_Usage (
-            Customer_Id, Promo_Code, Usage_Count, First_Used_At, Last_Used_At
-        ) VALUES (
-            p_Customer_Id, p_Promo_Code, 1, UTC_TIMESTAMP(), UTC_TIMESTAMP()
-        );
-    END IF;
+    SELECT COALESCE(SUM(Usage_Count), 0)
+    INTO p_Total_Usage
+    FROM client1.Promo_Usage
+    WHERE Promo_Code = p_Promo_Code;
+
+    SELECT COALESCE(Usage_Count, 0)
+    INTO p_Customer_Usage
+    FROM client1.Promo_Usage
+    WHERE Promo_Code = p_Promo_Code AND Customer_Id = p_Customer_Id
+    LIMIT 1;
 
     SET p_Result_Code = 1;
     END TRY_PROC;
-    CALL client1.usp_Insert_User_Session_Log (p_Session_Key, 'usp_Increment_Promo_Usage', p_Result_Code, Log_Details);
+    CALL client1.usp_Insert_User_Session_Log (p_Session_Key, 'usp_Get_Promo_Usage_Summary', p_Result_Code, Log_Details);
 END
 
 
