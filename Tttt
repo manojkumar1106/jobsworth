@@ -4,3 +4,51 @@ public List<Map<String, Object>> getRulesReload() {
 
 
 List<Map<String, Object>> ruleDefinitionMap = ruleDefinitionDao.getRulesReload();
+
+
+
+public List<Map<String, Object>> getAllSystemDiscounts(String sessionKey) {
+    return executeList(procName: "usp_Get_System_Discounts",
+            Map.of(k1: "p_Session_Key", sessionKey));
+}
+
+
+public List<Map<String, Object>> getAllSystemDiscounts(String sessionKey) {
+    log.info("Fetching system discounts for session: {}", sessionKey);
+    List<Map<String, Object>> discounts = systemDiscountDao.getAllSystemDiscounts(sessionKey);
+
+    Map<Long, String> timezoneCache = new HashMap<>();
+    for (Map<String, Object> discount : discounts) {
+        Object locationIdObj = discount.get("Location_Id");
+        if (locationIdObj == null) continue;
+        Long locationId = ((Number) locationIdObj).longValue();
+
+        String timezone = timezoneCache.computeIfAbsent(locationId,
+                id -> systemDiscountDao.getTimezoneByLocation(sessionKey, id.intValue()));
+
+        if (discount.get("Start_Date") != null) {
+            discount.put("Start_Date",
+                    TimezoneConverter.toLocal(asLocalDateTime(discount.get("Start_Date")), timezone));
+        }
+        if (discount.get("End_Date") != null) {
+            discount.put("End_Date",
+                    TimezoneConverter.toLocal(asLocalDateTime(discount.get("End_Date")), timezone));
+        }
+    }
+    return discounts;
+}
+
+private LocalDateTime asLocalDateTime(Object value) {
+    if (value == null) return null;
+    if (value instanceof LocalDateTime) return (LocalDateTime) value;
+    if (value instanceof Timestamp) return ((Timestamp) value).toLocalDateTime();
+    return null;
+}
+
+
+@GetMapping
+public ApiResponse<?> getAll(@RequestParam String sessionKey) {
+    List<Map<String, Object>> discounts = systemDiscountService.getAllSystemDiscounts(sessionKey);
+    return ApiResponse.success(message: "System Discounts Fetched", discounts);
+}
+
