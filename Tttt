@@ -1,10 +1,73 @@
-private Promotion findActivePromoByCode(String code, String sessionKey) {
-    Map<String, Object> row = promotionDao.getPromotionByCode(sessionKey, code);
-    if (row == null || row.isEmpty()) {
-        throw new RuntimeException("Promo [" + code + "] not found");
+CREATE PROCEDURE usp_Get_Promo_Usage_Summary(
+    IN p_Promo_Code VARCHAR(254),
+    IN p_Customer_Id VARCHAR(254),
+    OUT p_Total_Usage INT,
+    OUT p_Customer_Usage INT,
+    OUT p_Result_Code INT
+)
+BEGIN
+    DECLARE EXIT HANDLER FOR SQLEXCEPTION BEGIN SET p_Result_Code = -1; END;
+
+    SELECT COALESCE(SUM(Usage_Count), 0) INTO p_Total_Usage
+    FROM client1.Promo_Usage
+    WHERE Promo_Code = p_Promo_Code;
+
+    SELECT COALESCE(Usage_Count, 0) INTO p_Customer_Usage
+    FROM client1.Promo_Usage
+    WHERE Promo_Code = p_Promo_Code AND Customer_Id = p_Customer_Id
+    LIMIT 1;
+
+    IF p_Customer_Usage IS NULL THEN
+        SET p_Customer_Usage = 0;
+    END IF;
+
+    SET p_Result_Code = 1;
+END
+
+
+
+
+public PromoUsageSummary getUsageSummary(String promoCode, String customerId) {
+    Map<String, Object> params = new HashMap<>();
+    params.put("p_Promo_Code", promoCode);
+    params.put("p_Customer_Id", customerId);
+
+    Map<String, Object> out = call("usp_Get_Promo_Usage_Summary").execute(params);
+    validateResultCode(out, "usp_Get_Promo_Usage_Summary");
+
+    int totalUsage = ((Number) out.get("p_Total_Usage")).intValue();
+    int customerUsage = ((Number) out.get("p_Customer_Usage")).intValue();
+
+    return new PromoUsageSummary(totalUsage, customerUsage);
+}
+
+public static class PromoUsageSummary {
+    private final int totalUsage;
+    private final int customerUsage;
+
+    public PromoUsageSummary(int totalUsage, int customerUsage) {
+        this.totalUsage = totalUsage;
+        this.customerUsage = customerUsage;
     }
 
-    ObjectMapper mapper = new ObjectMapper();
-    mapper.registerModule(new JavaTimeModule());
-    return mapper.convertValue(row, Promotion.class);
+    public int getTotalUsage() { return totalUsage; }
+    public int getCustomerUsage() { return customerUsage; }
+
+
 }
+
+
+
+if (promo.getUsageLimit() != null || promo.getMaxUsagePerCustomer() != null) {
+    PromoUsageDao.PromoUsageSummary usage = promoUsageDao.getUsageSummary(promoCode, customerId);
+
+    if (promo.getUsageLimit() != null && usage.getTotalUsage() >= promo.getUsageLimit()) {
+        throw new RuntimeException("Promo [" + promoCode + "] reached global limit of " + promo.getUsageLimit());
+    }
+
+    if (promo.getMaxUsagePerCustomer() != null && usage.getCustomerUsage() >= promo.getMaxUsagePerCustomer()) {
+        throw new RuntimeException("You have already used promo [" + promoCode + "] "
+                + usage.getCustomerUsage() + " time(s). Max allowed: " + promo.getMaxUsagePerCustomer());
+    }
+}
+
