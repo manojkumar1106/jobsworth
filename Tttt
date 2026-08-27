@@ -1,73 +1,56 @@
-CREATE PROCEDURE usp_Get_Promo_Usage_Summary(
-    IN p_Promo_Code VARCHAR(254),
-    IN p_Customer_Id VARCHAR(254),
-    OUT p_Total_Usage INT,
-    OUT p_Customer_Usage INT,
-    OUT p_Result_Code INT
-)
-BEGIN
-    DECLARE EXIT HANDLER FOR SQLEXCEPTION BEGIN SET p_Result_Code = -1; END;
+Map<String, Object> promotion = promotionDao.updatePromotion(request); // capture the returned map (like create does)
 
-    SELECT COALESCE(SUM(Usage_Count), 0) INTO p_Total_Usage
-    FROM client1.Promo_Usage
-    WHERE Promo_Code = p_Promo_Code;
+ObjectMapper objectMapper = new ObjectMapper();
+objectMapper.registerModule(new JavaTimeModule());
+Promotion promotionObj = objectMapper.convertValue(promotion, Promotion.class);
 
-    SELECT COALESCE(Usage_Count, 0) INTO p_Customer_Usage
-    FROM client1.Promo_Usage
-    WHERE Promo_Code = p_Promo_Code AND Customer_Id = p_Customer_Id
-    LIMIT 1;
+log.info("Promotion updated promotionId={} location={} amenity={} promoCode={}",
+        request.getPromotionId(), request.getLocationId(),
+        request.getAmenityId(), request.getPromoCode());
 
-    IF p_Customer_Usage IS NULL THEN
-        SET p_Customer_Usage = 0;
-    END IF;
-
-    SET p_Result_Code = 1;
-END
-
-
-
-
-public PromoUsageSummary getUsageSummary(String promoCode, String customerId) {
-    Map<String, Object> params = new HashMap<>();
-    params.put("p_Promo_Code", promoCode);
-    params.put("p_Customer_Id", customerId);
-
-    Map<String, Object> out = call("usp_Get_Promo_Usage_Summary").execute(params);
-    validateResultCode(out, "usp_Get_Promo_Usage_Summary");
-
-    int totalUsage = ((Number) out.get("p_Total_Usage")).intValue();
-    int customerUsage = ((Number) out.get("p_Customer_Usage")).intValue();
-
-    return new PromoUsageSummary(totalUsage, customerUsage);
-}
-
-public static class PromoUsageSummary {
-    private final int totalUsage;
-    private final int customerUsage;
-
-    public PromoUsageSummary(int totalUsage, int customerUsage) {
-        this.totalUsage = totalUsage;
-        this.customerUsage = customerUsage;
-    }
-
-    public int getTotalUsage() { return totalUsage; }
-    public int getCustomerUsage() { return customerUsage; }
-
-
+if (PromotionStatus.PUBLISHED.name().equals(request.getPromoStatus())) {
+    droolsRuleService.generatePromotionRule(promotionObj, "ADMIN", request.getSessionKey());
 }
 
 
 
-if (promo.getUsageLimit() != null || promo.getMaxUsagePerCustomer() != null) {
-    PromoUsageDao.PromoUsageSummary usage = promoUsageDao.getUsageSummary(promoCode, customerId);
+private final SystemDiscountDao systemDiscountDao;
+private final DroolsRuleService droolsRuleService;   // ADD THIS
 
-    if (promo.getUsageLimit() != null && usage.getTotalUsage() >= promo.getUsageLimit()) {
-        throw new RuntimeException("Promo [" + promoCode + "] reached global limit of " + promo.getUsageLimit());
-    }
 
-    if (promo.getMaxUsagePerCustomer() != null && usage.getCustomerUsage() >= promo.getMaxUsagePerCustomer()) {
-        throw new RuntimeException("You have already used promo [" + promoCode + "] "
-                + usage.getCustomerUsage() + " time(s). Max allowed: " + promo.getMaxUsagePerCustomer());
-    }
+
+Integer id = systemDiscountDao.createSystemDiscount(request);
+
+ObjectMapper objectMapper = new ObjectMapper();
+objectMapper.registerModule(new JavaTimeModule());
+// however you get the full saved object — either createSystemDiscount should return
+// the map/entity (like promotionDao.createPromotion does), or fetch by id here
+SystemDiscount sdObj = objectMapper.convertValue(/* saved map/entity */, SystemDiscount.class);
+
+log.info("Created system discount id={} location={} amenity={}",
+        id, request.getLocationId(), request.getAmenityId());
+
+if (SystemDiscountStatus.PUBLISHED.name().equals(request.getSystemDiscountStatus())) {
+    droolsRuleService.generateSystemDiscountRule(sdObj, "ADMIN", request.getSessionKey());
+}
+
+return id;
+
+
+
+
+convertDatesToUtcIfPresent(request);
+
+systemDiscountDao.updateSystemDiscount(request); // capture return value if it can give you the saved entity
+
+ObjectMapper objectMapper = new ObjectMapper();
+objectMapper.registerModule(new JavaTimeModule());
+SystemDiscount sdObj = objectMapper.convertValue(/* saved map/entity */, SystemDiscount.class);
+
+log.info("System discount updated id={} location={} amenity={}",
+        request.getSystemDiscountId(), request.getLocationId(), request.getAmenityId());
+
+if (SystemDiscountStatus.PUBLISHED.name().equals(request.getSystemDiscountStatus())) {
+    droolsRuleService.generateSystemDiscountRule(sdObj, "ADMIN", request.getSessionKey());
 }
 
