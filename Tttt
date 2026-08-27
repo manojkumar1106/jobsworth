@@ -204,3 +204,56 @@ ObjectMapper objectMapper = new ObjectMapper();
 objectMapper.registerModule(new JavaTimeModule());
 Promotion promotionObj = objectMapper.convertValue(promotion, Promotion.class);
 
+
+
+@Transactional
+public Integer createSystemDiscount(CreateSystemDiscountRequest request) {
+
+    if (!request.getStartDate().isBefore(request.getEndDate())) {
+        throw new ValidationException("Start date must be before end date");
+    }
+
+    String timezone = systemDiscountDao.getTimezoneByLocation(
+            request.getSessionKey(), request.getLocationId().intValue());
+
+    request.setStartDate(
+            TimezoneConverter.toUtc(request.getStartDate(), timezone).toLocalDateTime());
+    request.setEndDate(
+            TimezoneConverter.toUtc(request.getEndDate(), timezone).toLocalDateTime());
+
+    Map<String, Object> systemDiscount = systemDiscountDao.createSystemDiscount(request);
+
+    ObjectMapper objectMapper = new ObjectMapper();
+    objectMapper.registerModule(new JavaTimeModule());
+    SystemDiscount sdObj = objectMapper.convertValue(systemDiscount, SystemDiscount.class);
+
+    log.info("Created system discount id={} location={} amenity={}",
+            sdObj.getId(), request.getLocationId(), request.getAmenityId());
+
+    if (DiscountStatus.PUBLISHED.name().equals(request.getSystemDiscountStatus())) {
+        droolsRuleService.generateSystemDiscountRule(sdObj, "ADMIN", request.getSessionKey());
+    }
+
+    return sdObj.getId().intValue();
+}
+
+
+@Transactional
+public void updateSystemDiscount(CreateSystemDiscountRequest request) {
+
+    convertDatesToUtcIfPresent(request);
+
+    Map<String, Object> systemDiscount = systemDiscountDao.updateSystemDiscount(request);
+
+    ObjectMapper objectMapper = new ObjectMapper();
+    objectMapper.registerModule(new JavaTimeModule());
+    SystemDiscount sdObj = objectMapper.convertValue(systemDiscount, SystemDiscount.class);
+
+    log.info("System discount updated id={} location={} amenity={}",
+            request.getSystemDiscountId(), request.getLocationId(), request.getAmenityId());
+
+    if (DiscountStatus.PUBLISHED.name().equals(request.getSystemDiscountStatus())) {
+        droolsRuleService.generateSystemDiscountRule(sdObj, "ADMIN", request.getSessionKey());
+    }
+}
+
