@@ -193,3 +193,14 @@ public Integer createSystemDiscount(CreateSystemDiscountRequest request) {
     return id;
 }
 
+
+
+promotionDao.updatePromotion(request);
+
+Map<String, Object> promotion = promotionDao.getPromotionByCode(
+        request.getSessionKey(), request.getPromoCode());
+
+ObjectMapper objectMapper = new ObjectMapper();
+objectMapper.registerModule(new JavaTimeModule());
+Promotion promotionObj = objectMapper.convertValue(promotion, Promotion.class);
+
