@@ -52,3 +52,47 @@ public ApiResponse<?> getAll(@RequestParam String sessionKey) {
     return ApiResponse.success(message: "System Discounts Fetched", discounts);
 }
 
+
+
+
+
+
+package hlt.promo.engine.dao;
+
+import hlt.promo.engine.model.DiscountAuditLog;
+import org.springframework.stereotype.Repository;
+
+import java.util.HashMap;
+import java.util.Map;
+
+@Repository
+public class DiscountAuditLogDao extends BaseDao {
+
+    public Map<String, Object> createDiscountAuditLog(DiscountAuditLog log, String sessionKey) {
+        Map<String, Object> params = new HashMap<>();
+        params.put("p_Session_Key", sessionKey);
+        params.put("p_Customer_Id", log.getCustomerId());
+        params.put("p_Applied_Discount_JSON", log.getAppliedDiscountsJson());
+        params.put("p_Original_Total", log.getOriginalTotal());
+        params.put("p_Total_Disocunt", log.getTotalDiscount());
+        params.put("p_Final_Total", log.getFinalTotal());
+        params.put("p_Promo_Codes", log.getPromoCodes());
+        params.put("p_Rules_Fired", log.getRulesFired());
+        params.put("p_Manager_Approval_Required", log.getManagerApprovalRequired());
+        return executeSingle(procName: "usp_Create_Discount_Audit_Log", params);
+    }
+}
+
+
+
+private final DiscountAuditLogDao discountAuditLogDao;   // ADD (as final, for @RequiredArgsConstructor)
+
+
+discountAuditLogDao.createDiscountAuditLog(log, sessionKey);
+
+
+
+@Async
+public void saveAuditLogAsync(Cart cart, DiscountResult result, String sessionKey) {
+
+
