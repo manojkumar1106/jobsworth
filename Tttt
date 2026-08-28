@@ -1,85 +1,17 @@
-public Map<String, Object> approveSystemDiscount(String sessionKey, Integer id,
-                                                 String approvedBy, String decision) {
-    Map<String, Object> params = new HashMap<>();
-    params.put("p_Session_Key", sessionKey);
-    params.put("p_System_Discount_Id", id);
-    params.put("p_Approved_By", approvedBy);
-    params.put("p_Approval_Decision", decision);
-    return executeSingle(procName: "usp_Approve_System_Discount", params);
-}
-
-
-
 boolean needsApproval = Boolean.TRUE.equals(request.getManagerApprovalRequired());
-boolean published = DiscountStatus.PUBLISHED.name().equals(request.getSystemDiscountStatus());
 
-if (published && !needsApproval) {
+if (DiscountStatus.PUBLISHED.name().equals(request.getSystemDiscountStatus())
+        && !needsApproval) {
     droolsRuleService.generateSystemDiscountRule(sdObj, "ADMIN", request.getSessionKey());
 }
 
 
+boolean needsApproval = Boolean.TRUE.equals(request.getManagerApprovalRequired());
 
-// Manager approves or rejects a discount awaiting approval
-@PutMapping("/{id}/approve")
-public ApiResponse<?> approve(@PathVariable Integer id,
-                              @RequestParam String sessionKey,
-                              @RequestParam String approvedBy,
-                              @RequestParam String decision) {
-    SystemDiscount updated = systemDiscountService.approveSystemDiscount(
-            sessionKey, id, approvedBy, decision);
-    return ApiResponse.success(message: "System Discount " + decision, updated);
+if (DiscountStatus.PUBLISHED.name().equals(request.getSystemDiscountStatus())
+        && !needsApproval) {
+    droolsRuleService.generateSystemDiscountRule(sdObj, "ADMIN", request.getSessionKey());
+} else {
+    droolsRuleService.deactivateSystemDiscountRule(sdObj.getId(), request.getSessionKey());
 }
-
-// Approval queue — discounts waiting on a manager
-@GetMapping("/pending-approval")
-public ApiResponse<?> getPendingApproval(@RequestParam String sessionKey) {
-    return ApiResponse.success(message: "Pending Approval Discounts Fetched",
-            systemDiscountService.getPendingApprovalDiscounts(sessionKey));
-}
-
-
-
-
-@Transactional
-public SystemDiscount approveSystemDiscount(String sessionKey, Integer id,
-                                            String approvedBy, String decision) {
-
-    Map<String, Object> row = systemDiscountDao.approveSystemDiscount(
-            sessionKey, id, approvedBy, decision);
-
-    ObjectMapper objectMapper = new ObjectMapper();
-    objectMapper.registerModule(new JavaTimeModule());
-    SystemDiscount sdObj = objectMapper.convertValue(row, SystemDiscount.class);
-
-    log.info("System discount {} by {} for id={}", decision, approvedBy, id);
-
-    // Only generate the rule when approved — rejection leaves it unpublished
-    if ("APPROVED".equals(decision)) {
-        droolsRuleService.generateSystemDiscountRule(sdObj, approvedBy, sessionKey);
-    }
-
-    return sdObj;
-}
-
-
-
-public List<Map<String, Object>> getAuditLogsByCustomer(String sessionKey, String customerId) {
-    Map<String, Object> params = new HashMap<>();
-    params.put("p_Session_Key", sessionKey);
-    params.put("p_Customer_Id", customerId);
-    return executeList(procName: "usp_Get_Discount_Audit_Logs", params);
-}
-
-
-
-
-@GetMapping("/audit/{customerId}")
-public ApiResponse<?> getAuditLogs(@PathVariable String customerId,
-                                   @RequestParam String sessionKey) {
-    return ApiResponse.success(message: "Audit Logs Fetched",
-            discountAuditLogDao.getAuditLogsByCustomer(sessionKey, customerId));
-}
-
-
-
 
