@@ -36,3 +36,29 @@ public ApiResponse<?> getPendingApproval(@RequestParam String sessionKey) {
     return ApiResponse.success(message: "Pending Approval Discounts Fetched",
             systemDiscountService.getPendingApprovalDiscounts(sessionKey));
 }
+
+
+
+
+@Transactional
+public SystemDiscount approveSystemDiscount(String sessionKey, Integer id,
+                                            String approvedBy, String decision) {
+
+    Map<String, Object> row = systemDiscountDao.approveSystemDiscount(
+            sessionKey, id, approvedBy, decision);
+
+    ObjectMapper objectMapper = new ObjectMapper();
+    objectMapper.registerModule(new JavaTimeModule());
+    SystemDiscount sdObj = objectMapper.convertValue(row, SystemDiscount.class);
+
+    log.info("System discount {} by {} for id={}", decision, approvedBy, id);
+
+    // Only generate the rule when approved — rejection leaves it unpublished
+    if ("APPROVED".equals(decision)) {
+        droolsRuleService.generateSystemDiscountRule(sdObj, approvedBy, sessionKey);
+    }
+
+    return sdObj;
+}
+
+
