@@ -29,3 +29,9 @@ public Integer deactivateRuleDefinition(Long ruleDefinitionId, String sessionKey
         params.put("p_Rule_Definition_Id", ruleDefinitionId);
         return executeSingle(procName: "usp_Deactivate_Rule_Definition", params);
     }
+
+
+// NEW — wrapper the call sites actually invoke
+public void deactivateRuleDefinition(Long referenceId, String sessionKey) {
+    deactivateRule("SYSTEM_DISCOUNT", referenceId, "ADMIN", sessionKey);
+}
