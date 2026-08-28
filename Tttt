@@ -15,3 +15,53 @@ if (DiscountStatus.PUBLISHED.name().equals(request.getSystemDiscountStatus())
     droolsRuleService.deactivateSystemDiscountRule(sdObj.getId(), request.getSessionKey());
 }
 
+
+
+@Transactional
+public void deactivateRule(String ruleType, Long referenceId, String changedBy, String sessionKey) {
+    Map<String, Object> rule = ruleDefinitionDao.findByRuleTypeAndReferenceIdAndActiveTrue(ruleType, referenceId, sessionKey);
+
+    if (rule == null || rule.isEmpty()) {
+        log.warn("No active rule found for ruleType={}, referenceId={}", ruleType, referenceId);
+        return;
+    }
+
+    Long ruleDefinitionId = ((Number) rule.get("Rule_Definition_Id")).longValue();
+    String ruleName = (String) rule.get("Rule_Name");
+
+    saveHistory(rule, "DEACTIVATED", changedBy);
+
+    Integer result = ruleDefinitionDao.deactivateRuleDefinition(ruleDefinitionId, sessionKey);
+    if (result == null || result != 1) {
+        log.warn("Rule_Definitions deactivation did not succeed for id={}, resultCode={}", ruleDefinitionId, result);
+        return;
+    }
+
+    switch (ruleType) {
+        case "SYSTEM_DISCOUNT" -> deactivateSystemDiscount(referenceId, sessionKey);
+        case "PROMOTION" -> deactivatePromotion(referenceId, sessionKey);
+        default -> log.warn("No deactivation handler for ruleType: {}", ruleType);
+    }
+
+    getEngineService().reloadRules();
+    log.info("Rule deactivated: {}", ruleName);
+}
+
+
+if ("APPROVED".equals(decision)) {
+    droolsRuleService.generateSystemDiscountRule(sdObj, "ADMIN", sessionKey);
+} else {
+    droolsRuleService.deactivateSystemDiscountRule(sdObj.getId(), sessionKey);
+}
+
+
+
+
+if (DiscountStatus.PUBLISHED.name().equals(request.getSystemDiscountStatus())
+        && !needsApproval) {
+    droolsRuleService.generateSystemDiscountRule(sdObj, "ADMIN", request.getSessionKey());
+} else {
+    droolsRuleService.deactivateSystemDiscountRule(sdObj.getId(), request.getSessionKey());
+}
+
+
