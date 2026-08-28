@@ -1,98 +1,38 @@
-public List<Map<String, Object>> getRulesReload() {
-    return executeList(procName: "usp_Get_Rules_Reload", new HashMap<>());
-}
-
-
-List<Map<String, Object>> ruleDefinitionMap = ruleDefinitionDao.getRulesReload();
-
-
-
-public List<Map<String, Object>> getAllSystemDiscounts(String sessionKey) {
-    return executeList(procName: "usp_Get_System_Discounts",
-            Map.of(k1: "p_Session_Key", sessionKey));
-}
-
-
-public List<Map<String, Object>> getAllSystemDiscounts(String sessionKey) {
-    log.info("Fetching system discounts for session: {}", sessionKey);
-    List<Map<String, Object>> discounts = systemDiscountDao.getAllSystemDiscounts(sessionKey);
-
-    Map<Long, String> timezoneCache = new HashMap<>();
-    for (Map<String, Object> discount : discounts) {
-        Object locationIdObj = discount.get("Location_Id");
-        if (locationIdObj == null) continue;
-        Long locationId = ((Number) locationIdObj).longValue();
-
-        String timezone = timezoneCache.computeIfAbsent(locationId,
-                id -> systemDiscountDao.getTimezoneByLocation(sessionKey, id.intValue()));
-
-        if (discount.get("Start_Date") != null) {
-            discount.put("Start_Date",
-                    TimezoneConverter.toLocal(asLocalDateTime(discount.get("Start_Date")), timezone));
-        }
-        if (discount.get("End_Date") != null) {
-            discount.put("End_Date",
-                    TimezoneConverter.toLocal(asLocalDateTime(discount.get("End_Date")), timezone));
-        }
-    }
-    return discounts;
-}
-
-private LocalDateTime asLocalDateTime(Object value) {
-    if (value == null) return null;
-    if (value instanceof LocalDateTime) return (LocalDateTime) value;
-    if (value instanceof Timestamp) return ((Timestamp) value).toLocalDateTime();
-    return null;
-}
-
-
-@GetMapping
-public ApiResponse<?> getAll(@RequestParam String sessionKey) {
-    List<Map<String, Object>> discounts = systemDiscountService.getAllSystemDiscounts(sessionKey);
-    return ApiResponse.success(message: "System Discounts Fetched", discounts);
+public Map<String, Object> approveSystemDiscount(String sessionKey, Integer id,
+                                                 String approvedBy, String decision) {
+    Map<String, Object> params = new HashMap<>();
+    params.put("p_Session_Key", sessionKey);
+    params.put("p_System_Discount_Id", id);
+    params.put("p_Approved_By", approvedBy);
+    params.put("p_Approval_Decision", decision);
+    return executeSingle(procName: "usp_Approve_System_Discount", params);
 }
 
 
 
+boolean needsApproval = Boolean.TRUE.equals(request.getManagerApprovalRequired());
+boolean published = DiscountStatus.PUBLISHED.name().equals(request.getSystemDiscountStatus());
 
-
-
-package hlt.promo.engine.dao;
-
-import hlt.promo.engine.model.DiscountAuditLog;
-import org.springframework.stereotype.Repository;
-
-import java.util.HashMap;
-import java.util.Map;
-
-@Repository
-public class DiscountAuditLogDao extends BaseDao {
-
-    public Map<String, Object> createDiscountAuditLog(DiscountAuditLog log, String sessionKey) {
-        Map<String, Object> params = new HashMap<>();
-        params.put("p_Session_Key", sessionKey);
-        params.put("p_Customer_Id", log.getCustomerId());
-        params.put("p_Applied_Discount_JSON", log.getAppliedDiscountsJson());
-        params.put("p_Original_Total", log.getOriginalTotal());
-        params.put("p_Total_Disocunt", log.getTotalDiscount());
-        params.put("p_Final_Total", log.getFinalTotal());
-        params.put("p_Promo_Codes", log.getPromoCodes());
-        params.put("p_Rules_Fired", log.getRulesFired());
-        params.put("p_Manager_Approval_Required", log.getManagerApprovalRequired());
-        return executeSingle(procName: "usp_Create_Discount_Audit_Log", params);
-    }
+if (published && !needsApproval) {
+    droolsRuleService.generateSystemDiscountRule(sdObj, "ADMIN", request.getSessionKey());
 }
 
 
 
-private final DiscountAuditLogDao discountAuditLogDao;   // ADD (as final, for @RequiredArgsConstructor)
+// Manager approves or rejects a discount awaiting approval
+@PutMapping("/{id}/approve")
+public ApiResponse<?> approve(@PathVariable Integer id,
+                              @RequestParam String sessionKey,
+                              @RequestParam String approvedBy,
+                              @RequestParam String decision) {
+    SystemDiscount updated = systemDiscountService.approveSystemDiscount(
+            sessionKey, id, approvedBy, decision);
+    return ApiResponse.success(message: "System Discount " + decision, updated);
+}
 
-
-discountAuditLogDao.createDiscountAuditLog(log, sessionKey);
-
-
-
-@Async
-public void saveAuditLogAsync(Cart cart, DiscountResult result, String sessionKey) {
-
-
+// Approval queue — discounts waiting on a manager
+@GetMapping("/pending-approval")
+public ApiResponse<?> getPendingApproval(@RequestParam String sessionKey) {
+    return ApiResponse.success(message: "Pending Approval Discounts Fetched",
+            systemDiscountService.getPendingApprovalDiscounts(sessionKey));
+}
