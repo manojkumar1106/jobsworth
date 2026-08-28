@@ -1,67 +1,31 @@
-boolean needsApproval = Boolean.TRUE.equals(request.getManagerApprovalRequired());
+@Repository
+public class SystemDiscountDao extends BaseDao {
 
-if (DiscountStatus.PUBLISHED.name().equals(request.getSystemDiscountStatus())
-        && !needsApproval) {
-    droolsRuleService.generateSystemDiscountRule(sdObj, "ADMIN", request.getSessionKey());
-}
-
-
-boolean needsApproval = Boolean.TRUE.equals(request.getManagerApprovalRequired());
-
-if (DiscountStatus.PUBLISHED.name().equals(request.getSystemDiscountStatus())
-        && !needsApproval) {
-    droolsRuleService.generateSystemDiscountRule(sdObj, "ADMIN", request.getSessionKey());
-} else {
-    droolsRuleService.deactivateSystemDiscountRule(sdObj.getId(), request.getSessionKey());
-}
-
-
-
-@Transactional
-public void deactivateRule(String ruleType, Long referenceId, String changedBy, String sessionKey) {
-    Map<String, Object> rule = ruleDefinitionDao.findByRuleTypeAndReferenceIdAndActiveTrue(ruleType, referenceId, sessionKey);
-
-    if (rule == null || rule.isEmpty()) {
-        log.warn("No active rule found for ruleType={}, referenceId={}", ruleType, referenceId);
-        return;
+    public Integer deactivateSystemDiscount(Long systemDiscountId, String sessionKey) {
+        Map<String, Object> params = new HashMap<>();
+        params.put("p_Session_Key", sessionKey);
+        params.put("p_System_Discount_Id", systemDiscountId);
+        return executeSingle(procName: "usp_Deactivate_System_Discount", params);
     }
+}
 
-    Long ruleDefinitionId = ((Number) rule.get("Rule_Definition_Id")).longValue();
-    String ruleName = (String) rule.get("Rule_Name");
 
-    saveHistory(rule, "DEACTIVATED", changedBy);
+@Repository
+public class PromotionDao extends BaseDao {
 
-    Integer result = ruleDefinitionDao.deactivateRuleDefinition(ruleDefinitionId, sessionKey);
-    if (result == null || result != 1) {
-        log.warn("Rule_Definitions deactivation did not succeed for id={}, resultCode={}", ruleDefinitionId, result);
-        return;
+    public Integer deactivatePromotion(Long promotionId, String sessionKey) {
+        Map<String, Object> params = new HashMap<>();
+        params.put("p_Session_Key", sessionKey);
+        params.put("p_Promotion_Id", promotionId);
+        return executeSingle(procName: "usp_Deactivate_Promotion", params);
     }
+}
 
-    switch (ruleType) {
-        case "SYSTEM_DISCOUNT" -> deactivateSystemDiscount(referenceId, sessionKey);
-        case "PROMOTION" -> deactivatePromotion(referenceId, sessionKey);
-        default -> log.warn("No deactivation handler for ruleType: {}", ruleType);
+
+
+public Integer deactivateRuleDefinition(Long ruleDefinitionId, String sessionKey) {
+        Map<String, Object> params = new HashMap<>();
+        params.put("p_Session_Key", sessionKey);
+        params.put("p_Rule_Definition_Id", ruleDefinitionId);
+        return executeSingle(procName: "usp_Deactivate_Rule_Definition", params);
     }
-
-    getEngineService().reloadRules();
-    log.info("Rule deactivated: {}", ruleName);
-}
-
-
-if ("APPROVED".equals(decision)) {
-    droolsRuleService.generateSystemDiscountRule(sdObj, "ADMIN", sessionKey);
-} else {
-    droolsRuleService.deactivateSystemDiscountRule(sdObj.getId(), sessionKey);
-}
-
-
-
-
-if (DiscountStatus.PUBLISHED.name().equals(request.getSystemDiscountStatus())
-        && !needsApproval) {
-    droolsRuleService.generateSystemDiscountRule(sdObj, "ADMIN", request.getSessionKey());
-} else {
-    droolsRuleService.deactivateSystemDiscountRule(sdObj.getId(), request.getSessionKey());
-}
-
-
