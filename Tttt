@@ -34,4 +34,33 @@ public Integer deactivateRuleDefinition(Long ruleDefinitionId, String sessionKey
 // NEW — wrapper the call sites actually invoke
 public void deactivateRuleDefinition(Long referenceId, String sessionKey) {
     deactivateRule("SYSTEM_DISCOUNT", referenceId, "ADMIN", sessionKey);
+
+
+
+@Transactional
+public void deactivateRule(String ruleType, Long referenceId, String changedBy, String sessionKey) {
+    Map<String, Object> ruleMap = ruleDefinitionDao.findByRuleTypeAndReferenceIdAndActiveTrue(ruleType, referenceId, sessionKey);
+
+    if (ruleMap == null || ruleMap.isEmpty()) {
+        log.warn("No active rule found for ruleType={}, referenceId={}", ruleType, referenceId);
+        return;
+    }
+
+    ObjectMapper mapper = new ObjectMapper();
+    mapper.registerModule(new JavaTimeModule());
+    RuleDefinition rule = mapper.convertValue(ruleMap, RuleDefinition.class);
+
+    saveHistory(rule, "DEACTIVATED", changedBy, sessionKey);
+
+    Integer result = ruleDefinitionDao.deactivateRuleDefinition(rule.getId(), sessionKey);
+    if (result == null || result != 1) {
+        log.warn("Rule_Definitions deactivation did not succeed for id={}, resultCode={}", rule.getId(), result);
+        return;
+    }
+
+    getEngineService().reloadRules();
+    log.info("Rule deactivated: {}", rule.getRuleName());
 }
+
+
+
