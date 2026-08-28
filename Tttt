@@ -62,3 +62,24 @@ public SystemDiscount approveSystemDiscount(String sessionKey, Integer id,
 }
 
 
+
+public List<Map<String, Object>> getAuditLogsByCustomer(String sessionKey, String customerId) {
+    Map<String, Object> params = new HashMap<>();
+    params.put("p_Session_Key", sessionKey);
+    params.put("p_Customer_Id", customerId);
+    return executeList(procName: "usp_Get_Discount_Audit_Logs", params);
+}
+
+
+
+
+@GetMapping("/audit/{customerId}")
+public ApiResponse<?> getAuditLogs(@PathVariable String customerId,
+                                   @RequestParam String sessionKey) {
+    return ApiResponse.success(message: "Audit Logs Fetched",
+            discountAuditLogDao.getAuditLogsByCustomer(sessionKey, customerId));
+}
+
+
+
+
