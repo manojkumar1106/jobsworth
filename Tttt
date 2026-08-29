@@ -20,3 +20,667 @@
   "icon": "weekend.org",
   "systemDiscountStatus": "PUBLISHED"
 }
+
+
+// =====================================================================
+//  SystemDiscountServiceNew  -- the two methods that change
+//
+//  createSystemDiscount     : NO CHANGE
+//  convertDatesToUtcIfPresent : NO CHANGE
+//  getAllSystemDiscounts    : NO CHANGE
+//  asLocalDateTime          : NO CHANGE
+// =====================================================================
+
+
+// =====================================================================
+//  1. updateSystemDiscount  -- REPLACE
+//
+//  The only real change is the log line. The proc now decides internally
+//  whether to write live or stage, and the existing
+//  "PUBLISHED && !needsApproval" guard already prevented the Drools call
+//  in the approval case - that was always right, it just had nothing to
+//  protect before.
+//
+//  When staging happens, the map the proc returns holds the OLD live
+//  values. That is correct: those are the values actually in effect.
+// =====================================================================
+
+    @Transactional
+    public void updateSystemDiscount(CreateSystemDiscountRequest request) {
+
+        convertDatesToUtcIfPresent(request);
+
+        Map<String, Object> systemDiscount =
+                systemDiscountDao.updateSystemDiscount(request);
+
+        if (systemDiscount == null) {
+            throw new IllegalArgumentException(
+                    "System discount not found for id=" + request.getSystemDiscountId());
+        }
+
+        ObjectMapper objectMapper = new ObjectMapper();
+        objectMapper.registerModule(new JavaTimeModule());
+        SystemDiscount sdObj =
+                objectMapper.convertValue(systemDiscount, SystemDiscount.class);
+
+        boolean needsApproval =
+                Boolean.TRUE.equals(request.getManagerApprovalRequired());
+
+        if (needsApproval) {
+            log.info("System discount update staged for approval id={} location={} amenity={}",
+                    request.getSystemDiscountId(),
+                    request.getLocationId(),
+                    request.getAmenityId());
+        } else {
+            log.info("System discount updated id={} location={} amenity={}",
+                    request.getSystemDiscountId(),
+                    request.getLocationId(),
+                    request.getAmenityId());
+        }
+
+        // Only touch the rule engine when the live row actually changed.
+        if (DiscountStatus.PUBLISHED.name().equals(request.getSystemDiscountStatus())
+                && !needsApproval) {
+            droolsRuleService.generateSystemDiscountRule(
+                    sdObj, "ADMIN", request.getSessionKey());
+        }
+    }
+
+
+// =====================================================================
+//  2. approveSystemDiscount  -- REPLACE
+//
+//  This is the required change. The current version calls
+//  deactivateRuleDefinition on EVERY rejection. Now that a rejected edit
+//  leaves the old discount live and untouched, deactivating its rule
+//  would pull a perfectly valid discount off the website.
+//
+//  Was_Pending_Update comes from the proc and separates the two cases:
+//    1  -> this was an EDIT awaiting sign-off
+//    0  -> this was a newly created discount awaiting sign-off
+//
+//  Signature unchanged, so PromotionController needs no change.
+// =====================================================================
+
+    @Transactional
+    public SystemDiscount approveSystemDiscount(String sessionKey,
+                                                Integer id,
+                                                String decision) {
+
+        Map<String, Object> row =
+                systemDiscountDao.approveSystemDiscount(sessionKey, id, decision);
+
+        if (row == null) {
+            throw new IllegalArgumentException("System discount not found for id=" + id);
+        }
+
+        // The proc CASTs this to UNSIGNED, so it always arrives as a Number.
+        Object flag = row.get("Was_Pending_Update");
+        boolean wasPendingUpdate = flag != null && ((Number) flag).intValue() == 1;
+
+        ObjectMapper objectMapper = new ObjectMapper();
+        objectMapper.registerModule(new JavaTimeModule());
+        SystemDiscount sdObj = objectMapper.convertValue(row, SystemDiscount.class);
+
+        log.info("System discount {} for id={} pendingUpdate={}",
+                decision, id, wasPendingUpdate);
+
+        if ("APPROVED".equals(decision)) {
+            // Live columns now hold the approved values. Covers both an
+            // approved edit and an approved first-time create.
+            droolsRuleService.generateSystemDiscountRule(sdObj, "ADMIN", sessionKey);
+
+        } else if (wasPendingUpdate) {
+            // Rejected EDIT of an already-live discount. The live row was
+            // never modified, so its existing rule is still correct and
+            // still active. Doing nothing is the whole point.
+            log.info("Rejected update id={} - existing rule left active", id);
+
+        } else {
+            // Rejected CREATE: this discount was never approved, so make
+            // sure nothing is live for it.
+            droolsRuleService.deactivateRuleDefinition(
+                    "SYSTEM_DISCOUNT", sdObj.getId(), "ADMIN", sessionKey);
+        }
+
+        return sdObj;
+    }
+
+
+// =====================================================================
+//  PromotionController  -- NO CHANGES REQUIRED
+//
+//  Both service signatures are unchanged, so your existing endpoints
+//  keep working as-is:
+//
+//      PUT  /system-discount        -> updateSystemDiscount(request)
+//      POST /system-discount/{id}/approve
+//                                   -> approveSystemDiscount(sessionKey, id, decision)
+//
+//
+//  OPTIONAL, only if the admin UI needs to show a pending edit.
+//  Right now the update and list endpoints both return live values, so
+//  an admin who submits a change for approval sees the old numbers come
+//  back and may think the save failed. If that matters, add a read
+//  endpoint that surfaces the staged JSON:
+//
+//      @GetMapping("/system-discount/{id}/pending")
+//      public ResponseEntity<String> getPendingUpdate(
+//              @RequestHeader("sessionKey") String sessionKey,
+//              @PathVariable Integer id) {
+//
+//          return ResponseEntity.ok(
+//                  systemDiscountServiceNew.getPendingUpdateJson(sessionKey, id));
+//      }
+//
+//  ...backed by a service method that reads Pending_Update_Json off the
+//  row. That needs a DAO read method and a get-by-id proc, so it is a
+//  separate piece of work - not required for the approval flow itself.
+// =====================================================================
+
+
+
+
+
+
+
+-- =====================================================================
+--  usp_Update_System_Discount  -- FULL PROC WITH STAGING
+--
+--  Signature UNCHANGED. Validation block UNCHANGED.
+--  Only the write section is new: when approval is required AND the
+--  discount is currently live, the computed values go into
+--  Pending_Update_Json instead of onto the live columns.
+--
+--  FIXES: the current version sets Is_Active = 0 and status = 'DRAFT'
+--  whenever approval is required, which takes a live discount off the
+--  website the instant an admin saves an edit. The staging branch never
+--  touches Is_Active or System_Discount_Status.
+--
+--  PREREQUISITE:
+--      ALTER TABLE client1.System_Discount
+--          ADD COLUMN Pending_Update_Json LONGTEXT NULL;
+--
+--  NOTE ON THE VALIDATION BLOCK: transcribed from your screenshot, which
+--  was partly out of focus. Diff it against your original and keep your
+--  lines wherever they differ - none of it needed to change.
+-- =====================================================================
+
+DELIMITER $$
+
+DROP PROCEDURE IF EXISTS client1.usp_Update_System_Discount$$
+
+CREATE DEFINER=`snd-tkts-bi-v1-AnywhereRole`@`%` PROCEDURE client1.usp_Update_System_Discount (
+    IN  p_Session_Key               VARCHAR(36)
+,   IN  p_Location_Id               INT
+,   IN  p_Amenity_Id                INT
+,   IN  p_System_Discount_Id        INT
+,   IN  p_Title                     VARCHAR(254)
+,   IN  p_Display_Name              VARCHAR(254)
+,   IN  p_Discount_Description      VARCHAR(254)
+,   IN  p_Discount_Type             VARCHAR(20)
+,   IN  p_Amount                    DECIMAL(10,2)
+,   IN  p_Min_Quantity              INT
+,   IN  p_User_Type                 VARCHAR(20)
+,   IN  p_Channel_POS               BIT
+,   IN  p_Channel_Web               BIT
+,   IN  p_Start_Date                DATETIME
+,   IN  p_End_Date                  DATETIME
+,   IN  p_Stackable                 BIT
+,   IN  p_Stack_Group               VARCHAR(254)
+,   IN  p_Priority                  INT
+,   IN  p_Manager_Approval_Required BIT
+,   IN  p_Icon                      VARCHAR(254)
+,   IN  p_System_Discount_Status    VARCHAR(20)
+,   OUT p_Result_Code               INT
+)
+BEGIN
+    DECLARE Log_Details VARCHAR(4000) DEFAULT '';
+    SET p_Result_Code = -1;
+
+    SELECT GloLocFun.Global_Location_Function_Id
+    INTO @Location_Function_Id
+      FROM Shared.Global_Location_Function GloLocFun
+      JOIN Shared.Function_Type_Permission FunTypPer
+        ON GloLocFun.Function_Type_Id = FunTypPer.Function_Type_Id
+     WHERE FunTypPer.Proc_Name = 'usp_Update_System_Discount'
+     LIMIT 1;
+
+    TRY_PROC: BEGIN
+        DECLARE EXIT HANDLER FOR SQLEXCEPTION
+            BEGIN GET DIAGNOSTICS CONDITION 1 Log_Details = message_text; ROLLBACK; END;
+
+        SET p_Result_Code = -2;
+        CALL client1.sys_Validate_Session(p_Session_Key, @Valid);
+        IF @Valid = FALSE THEN LEAVE TRY_PROC; END IF;
+
+        SET p_Result_Code = -3;
+        CALL client1.sys_Check_Session_Permission(
+                 p_Session_Key, @Location_Function_Id,
+                 'usp_Update_System_Discount', @Granted);
+        IF @Granted = FALSE THEN LEAVE TRY_PROC; END IF;
+
+        SET p_Result_Code = -4;
+
+        -- =============================================================
+        --  VALIDATION - UNCHANGED FROM YOUR EXISTING PROC
+        -- =============================================================
+
+        IF p_System_Discount_Id IS NULL THEN
+            SET Log_Details = 'p_System_Discount_Id'; LEAVE TRY_PROC;
+        END IF;
+
+        IF p_Title IS NULL OR TRIM(p_Title) = '' THEN
+            SET Log_Details = 'p_Title'; LEAVE TRY_PROC;
+        END IF;
+
+        IF EXISTS (
+            SELECT 1
+              FROM client1.System_Discount
+             WHERE Title = TRIM(p_Title)
+               AND System_Discount_Id <> p_System_Discount_Id
+             LIMIT 1
+        ) THEN
+            SET Log_Details = 'p_Title : Duplicate Title'; LEAVE TRY_PROC;
+        END IF;
+
+        IF p_Discount_Type IS NULL OR p_Discount_Type NOT IN ('FLAT','PERCENTAGE')
+            THEN SET Log_Details = 'p_Discount_Type: Must be Flat or Percentage'; LEAVE TRY_PROC; END IF;
+
+        IF p_Amount IS NULL OR p_Amount <= 0
+            THEN SET Log_Details = 'p_Amount'; LEAVE TRY_PROC; END IF;
+
+        IF p_Discount_Type = 'PERCENTAGE' AND p_Amount > 100
+            THEN SET Log_Details = 'p_Amount : Cannot exceed 100'; LEAVE TRY_PROC; END IF;
+
+        IF p_User_Type IS NOT NULL AND p_User_Type NOT IN ('ALL_USERS','MEMBERS','NON_MEMBERS')
+            THEN SET Log_Details = 'p_User_Type'; LEAVE TRY_PROC; END IF;
+
+        IF IFNULL(p_Channel_POS, 0) = 0 AND IFNULL(p_Channel_Web, 0) = 0
+            THEN SET Log_Details = 'p_Channel_Web/p_Channel_POS'; LEAVE TRY_PROC; END IF;
+
+        IF p_Start_Date IS NOT NULL AND p_End_Date IS NOT NULL AND p_End_Date <= p_Start_Date
+            THEN SET Log_Details = 'p_End_Date must be later than p_Start_Date'; LEAVE TRY_PROC; END IF;
+
+        IF p_End_Date IS NOT NULL AND p_Start_Date IS NULL
+            THEN SET Log_Details = 'p_Start_Date: Required when p_End_Date is supplied'; LEAVE TRY_PROC; END IF;
+
+        IF p_Min_Quantity IS NOT NULL AND p_Min_Quantity < 1
+            THEN SET Log_Details = 'p_Min_Quantity'; LEAVE TRY_PROC; END IF;
+
+        IF IFNULL(p_Stackable, 0) = 1 AND (p_Stack_Group IS NULL OR TRIM(p_Stack_Group) = '')
+            THEN SET Log_Details = 'p_Stack_Group required when stackable enabled'; LEAVE TRY_PROC; END IF;
+
+        IF IFNULL(p_Stackable, 0) = 0 AND p_Stack_Group IS NOT NULL AND TRIM(p_Stack_Group) <> ''
+            THEN SET Log_Details = 'p_Stack_Group must be empty when stackable is disabled'; LEAVE TRY_PROC; END IF;
+
+        IF p_Priority IS NOT NULL AND p_Priority < 0
+            THEN SET Log_Details = 'p_Priority'; LEAVE TRY_PROC; END IF;
+
+        IF p_System_Discount_Status IS NULL
+           OR p_System_Discount_Status NOT IN ('DRAFT','PENDING','PUBLISHED')
+            THEN SET Log_Details = 'p_System_Discount_Status'; LEAVE TRY_PROC; END IF;
+
+        IF p_Location_Id IS NOT NULL
+           AND NOT EXISTS (
+               SELECT 1 FROM client1.Location
+                WHERE Location_Id = p_Location_Id
+                LIMIT 1
+           )
+        THEN
+            SET Log_Details = 'p_Location_Id : Not Found'; LEAVE TRY_PROC;
+        END IF;
+
+        IF p_Amenity_Id IS NOT NULL
+           AND NOT EXISTS (
+               SELECT 1 FROM client1.Amenity
+                WHERE Amenity_Id = p_Amenity_Id
+                LIMIT 1
+           )
+        THEN
+            SET Log_Details = 'p_Amenity_Id: Not Found'; LEAVE TRY_PROC;
+        END IF;
+
+
+        -- =============================================================
+        --  NEW: decide whether to write live or stage
+        -- =============================================================
+
+        SELECT CAST(Is_Active AS UNSIGNED), Pending_Update_Json
+          INTO @Is_Live, @Existing_Pending
+          FROM client1.System_Discount
+         WHERE System_Discount_Id = p_System_Discount_Id
+         LIMIT 1;
+
+        IF @Is_Live IS NULL THEN
+            SET Log_Details = 'p_System_Discount_Id : Not Found'; LEAVE TRY_PROC;
+        END IF;
+
+        IF IFNULL(p_Manager_Approval_Required, 1) = 1 AND @Is_Live = 1 THEN
+
+            -- =========================================================
+            --  STAGE  -- live columns are NOT touched
+            --
+            --  The discount is live and this edit needs sign-off, so the
+            --  new values are parked as JSON. Customers keep transacting
+            --  on the current values and the active Rule_Definitions row
+            --  stays exactly as it is.
+            -- =========================================================
+
+            -- One pending edit at a time.
+            IF @Existing_Pending IS NOT NULL THEN
+                SET Log_Details = 'Changes already awaiting approval';
+                LEAVE TRY_PROC;
+            END IF;
+
+            -- Same expressions as the live UPDATE below, so approving
+            -- writes byte-for-byte what a direct update would have.
+            -- BIT columns are CAST to UNSIGNED because JSON_OBJECT()
+            -- encodes BIT as base64 ("AQ==") rather than 1/0.
+            SET @Pending_Json = JSON_OBJECT(
+                'Location_Id',          p_Location_Id,
+                'Amenity_Id',           p_Amenity_Id,
+                'Title',                TRIM(p_Title),
+                'Display_Name',         NULLIF(TRIM(IFNULL(p_Display_Name, '')), ''),
+                'Discount_Description', NULLIF(TRIM(IFNULL(p_Discount_Description, '')), ''),
+                'Discount_Type',        p_Discount_Type,
+                'Amount',               p_Amount,
+                'Min_Quantity',         p_Min_Quantity,
+                'User_Type',            IFNULL(p_User_Type, 'ALL_USERS'),
+                'Channel_POS',          CAST(IFNULL(p_Channel_POS, 0) AS UNSIGNED),
+                'Channel_Web',          CAST(IFNULL(p_Channel_Web, 0) AS UNSIGNED),
+                'Start_Date',           DATE_FORMAT(p_Start_Date, '%Y-%m-%d %H:%i:%s'),
+                'End_Date',             DATE_FORMAT(p_End_Date,   '%Y-%m-%d %H:%i:%s'),
+                'Stackable',            CAST(IFNULL(p_Stackable, 0) AS UNSIGNED),
+                'Stack_Group',          CASE WHEN IFNULL(p_Stackable, 0) = 1
+                                             THEN TRIM(p_Stack_Group) ELSE NULL END,
+                'Priority',             IFNULL(p_Priority, 0),
+                'Icon',                 NULLIF(TRIM(IFNULL(p_Icon, '')), ''),
+                -- the status the admin wants once this is approved
+                'System_Discount_Status', p_System_Discount_Status
+            );
+
+            UPDATE client1.System_Discount
+               SET Pending_Update_Json       = @Pending_Json
+            ,      Manager_Approval_Required = 1
+            ,      Approval_Status           = 'PENDING'
+            ,      Updated_At                = UTC_TIMESTAMP()
+            ,      Updated_By                = p_Session_Key
+             WHERE System_Discount_Id = p_System_Discount_Id;
+
+            -- Is_Active and System_Discount_Status deliberately untouched.
+
+        ELSE
+
+            -- =========================================================
+            --  LIVE WRITE  -- unchanged from your existing proc
+            --  Reached when approval is not required, or when the
+            --  discount is not live yet (a draft nobody can see).
+            -- =========================================================
+
+            UPDATE client1.System_Discount
+               SET Location_Id               = p_Location_Id
+            ,      Amenity_Id                = p_Amenity_Id
+            ,      Title                     = TRIM(p_Title)
+            ,      Display_Name              = NULLIF(TRIM(IFNULL(p_Display_Name, '')), '')
+            ,      Discount_Description      = NULLIF(TRIM(IFNULL(p_Discount_Description, '')), '')
+            ,      Discount_Type             = p_Discount_Type
+            ,      Amount                    = p_Amount
+            ,      Min_Quantity              = p_Min_Quantity
+            ,      User_Type                 = IFNULL(p_User_Type, 'ALL_USERS')
+            ,      Channel_POS               = IFNULL(p_Channel_POS, 0)
+            ,      Channel_Web               = IFNULL(p_Channel_Web, 0)
+            ,      Start_Date                = p_Start_Date
+            ,      End_Date                  = p_End_Date
+            ,      Stackable                 = IFNULL(p_Stackable, 0)
+            ,      Stack_Group               = CASE WHEN IFNULL(p_Stackable, 0) = 1
+                                                    THEN TRIM(p_Stack_Group) ELSE NULL END
+            ,      Priority                  = IFNULL(p_Priority, 0)
+            ,      Manager_Approval_Required = IFNULL(p_Manager_Approval_Required, 1)
+            ,      Approval_Status           = CASE WHEN IFNULL(p_Manager_Approval_Required, 1) = 1
+                                                    THEN 'PENDING' ELSE 'APPROVED' END
+            ,      System_Discount_Status    = CASE WHEN IFNULL(p_Manager_Approval_Required, 1) = 1
+                                                    THEN 'DRAFT' ELSE p_System_Discount_Status END
+            ,      Is_Active                 = CASE WHEN IFNULL(p_Manager_Approval_Required, 1) = 0
+                                                     AND p_System_Discount_Status = 'PUBLISHED'
+                                                    THEN 1 ELSE 0 END
+            ,      Icon                      = NULLIF(TRIM(IFNULL(p_Icon, '')), '')
+            ,      Updated_At                = UTC_TIMESTAMP()
+            ,      Updated_By                = p_Session_Key
+             WHERE System_Discount_Id = p_System_Discount_Id;
+
+        END IF;
+
+
+        -- =============================================================
+        --  RESULT SET - unchanged column list
+        -- =============================================================
+        SELECT
+            System_Discount_Id
+        ,   Location_Id
+        ,   Amenity_Id
+        ,   Is_Active
+        ,   Amount
+        ,   Approval_Status
+        ,   Channel_POS
+        ,   Channel_Web
+        ,   Created_At
+        ,   Created_By
+        ,   Discount_Description
+        ,   Discount_Type
+        ,   Display_Name
+        ,   End_Date
+        ,   Icon
+        ,   Manager_Approval_Required
+        ,   Min_Quantity
+        ,   Priority
+        ,   Stack_Group
+        ,   Stackable
+        ,   Start_Date
+        ,   System_Discount_Status
+        ,   Title
+        ,   Updated_At
+        ,   Updated_By
+        ,   User_Type
+          FROM client1.System_Discount
+         WHERE System_Discount_Id = p_System_Discount_Id;
+
+        SET p_Result_Code = 1;
+    END TRY_PROC;
+
+    CALL client1.usp_Insert_User_Session_Log(
+             p_Session_Key, 'usp_Update_System_Discount',
+             p_Result_Code, Log_Details);
+END$$
+
+DELIMITER ;
+
+
+
+
+
+
+-- =====================================================================
+--  usp_Approve_System_Discount  -- FULL PROC
+--
+--  Signature UNCHANGED (p_Session_Key, p_System_Discount_Id,
+--  p_Approval_Decision, OUT p_Result_Code).
+--
+--  Body changes vs your current version:
+--    a) APPROVED applies Pending_Update_Json onto the live columns
+--    b) a rejected EDIT no longer sets Is_Active = 0 / status DRAFT -
+--       your current version does, which would kill a live discount whose
+--       data was never actually changed
+--    c) result set gains Was_Pending_Update so the service layer knows
+--       whether to leave the Drools rule alone on rejection
+-- =====================================================================
+
+DELIMITER $$
+
+DROP PROCEDURE IF EXISTS client1.usp_Approve_System_Discount$$
+
+CREATE DEFINER=`snd-tkts-bi-v1-AnywhereRole`@`%` PROCEDURE client1.usp_Approve_System_Discount (
+    IN  p_Session_Key        VARCHAR(36)
+,   IN  p_System_Discount_Id INT
+,   IN  p_Approval_Decision  VARCHAR(20)
+,   OUT p_Result_Code        INT
+)
+BEGIN
+    DECLARE Log_Details VARCHAR(4000) DEFAULT '';
+    SET p_Result_Code = -1;
+
+    SELECT GloLocFun.Global_Location_Function_Id
+    INTO @Location_Function_Id
+      FROM Shared.Global_Location_Function GloLocFun
+      JOIN Shared.Function_Type_Permission FunTypPer
+        ON GloLocFun.Function_Type_Id = FunTypPer.Function_Type_Id
+     WHERE FunTypPer.Proc_Name = 'usp_Approve_System_Discount'
+     LIMIT 1;
+
+    TRY_PROC: BEGIN
+        DECLARE EXIT HANDLER FOR SQLEXCEPTION
+            BEGIN GET DIAGNOSTICS CONDITION 1 Log_Details = message_text; ROLLBACK; END;
+
+        SET p_Result_Code = -2;
+        CALL client1.sys_Validate_Session(p_Session_Key, @Valid);
+        IF @Valid = FALSE THEN LEAVE TRY_PROC; END IF;
+
+        SET p_Result_Code = -3;
+        CALL client1.sys_Check_Session_Permission(
+                 p_Session_Key, @Location_Function_Id,
+                 'usp_Approve_System_Discount', @Granted);
+        IF @Granted = FALSE THEN LEAVE TRY_PROC; END IF;
+
+        SET p_Result_Code = -4;
+
+        IF p_System_Discount_Id IS NULL THEN
+            SET Log_Details = 'p_System_Discount_Id'; LEAVE TRY_PROC;
+        END IF;
+
+        IF p_Approval_Decision IS NULL
+           OR p_Approval_Decision NOT IN ('APPROVED','REJECTED') THEN
+            SET Log_Details = 'p_Approval_Decision'; LEAVE TRY_PROC;
+        END IF;
+
+        SELECT Approval_Status
+        ,      CASE WHEN Pending_Update_Json IS NOT NULL THEN 1 ELSE 0 END
+        ,      Pending_Update_Json
+        INTO   @Current_Approval, @Was_Pending, @Pending_Json
+          FROM client1.System_Discount
+         WHERE System_Discount_Id = p_System_Discount_Id
+           AND IFNULL(Is_Removed, 0) = 0
+         LIMIT 1;
+
+        IF @Current_Approval IS NULL THEN
+            SET Log_Details = '@Current_Approval'; LEAVE TRY_PROC;
+        END IF;
+
+        IF @Current_Approval <> 'PENDING' THEN
+            SET Log_Details = '@Current_Approval <> PENDING'; LEAVE TRY_PROC;
+        END IF;
+
+
+        IF p_Approval_Decision = 'APPROVED' AND @Was_Pending = 1 THEN
+
+            -- =========================================================
+            --  APPROVED EDIT: apply the staged values, clear the staging
+            --  area. The snapshot is complete and already carries the
+            --  same transformations the live UPDATE would have applied,
+            --  so this is a straight overwrite.
+            --
+            --  Dates were UTC-converted in Java before staging. Fixed
+            --  format in, fixed format out - never reconvert here.
+            -- =========================================================
+
+            UPDATE client1.System_Discount
+               SET Location_Id          = JSON_EXTRACT(@Pending_Json, '$.Location_Id')
+            ,      Amenity_Id           = JSON_EXTRACT(@Pending_Json, '$.Amenity_Id')
+            ,      Title                = JSON_UNQUOTE(JSON_EXTRACT(@Pending_Json, '$.Title'))
+            ,      Display_Name         = JSON_UNQUOTE(JSON_EXTRACT(@Pending_Json, '$.Display_Name'))
+            ,      Discount_Description = JSON_UNQUOTE(JSON_EXTRACT(@Pending_Json, '$.Discount_Description'))
+            ,      Discount_Type        = JSON_UNQUOTE(JSON_EXTRACT(@Pending_Json, '$.Discount_Type'))
+            ,      Amount               = JSON_EXTRACT(@Pending_Json, '$.Amount')
+            ,      Min_Quantity         = JSON_EXTRACT(@Pending_Json, '$.Min_Quantity')
+            ,      User_Type            = JSON_UNQUOTE(JSON_EXTRACT(@Pending_Json, '$.User_Type'))
+
+                   -- integer in JSON -> back into BIT columns
+            ,      Channel_POS          = CAST(JSON_EXTRACT(@Pending_Json, '$.Channel_POS') AS UNSIGNED)
+            ,      Channel_Web          = CAST(JSON_EXTRACT(@Pending_Json, '$.Channel_Web') AS UNSIGNED)
+            ,      Stackable            = CAST(JSON_EXTRACT(@Pending_Json, '$.Stackable')   AS UNSIGNED)
+
+            ,      Start_Date           = STR_TO_DATE(JSON_UNQUOTE(JSON_EXTRACT(@Pending_Json, '$.Start_Date')), '%Y-%m-%d %H:%i:%s')
+            ,      End_Date             = STR_TO_DATE(JSON_UNQUOTE(JSON_EXTRACT(@Pending_Json, '$.End_Date')),   '%Y-%m-%d %H:%i:%s')
+
+            ,      Stack_Group          = JSON_UNQUOTE(JSON_EXTRACT(@Pending_Json, '$.Stack_Group'))
+            ,      Priority             = JSON_EXTRACT(@Pending_Json, '$.Priority')
+            ,      Icon                 = JSON_UNQUOTE(JSON_EXTRACT(@Pending_Json, '$.Icon'))
+
+                   -- the status the admin asked for when submitting
+            ,      System_Discount_Status = JSON_UNQUOTE(JSON_EXTRACT(@Pending_Json, '$.System_Discount_Status'))
+            ,      Is_Active            = CASE WHEN JSON_UNQUOTE(JSON_EXTRACT(@Pending_Json, '$.System_Discount_Status')) = 'PUBLISHED'
+                                               THEN 1 ELSE 0 END
+
+            ,      Approval_Status      = 'APPROVED'
+            ,      Pending_Update_Json  = NULL
+            ,      Updated_At           = UTC_TIMESTAMP()
+            ,      Updated_By           = p_Session_Key
+             WHERE System_Discount_Id = p_System_Discount_Id;
+
+        ELSEIF @Was_Pending = 1 THEN
+
+            -- =========================================================
+            --  REJECTED EDIT: throw the draft away, change nothing else.
+            --  Is_Active and System_Discount_Status are deliberately NOT
+            --  touched, so the already-approved discount keeps running
+            --  and its Rule_Definitions row stays active. Zero downtime.
+            -- =========================================================
+
+            UPDATE client1.System_Discount
+               SET Approval_Status     = 'REJECTED'
+            ,      Pending_Update_Json = NULL
+            ,      Updated_At          = UTC_TIMESTAMP()
+            ,      Updated_By          = p_Session_Key
+             WHERE System_Discount_Id = p_System_Discount_Id;
+
+        ELSE
+
+            -- =========================================================
+            --  No staged snapshot: a newly created discount being
+            --  approved or rejected. Your existing behaviour, unchanged.
+            -- =========================================================
+
+            UPDATE client1.System_Discount
+               SET Approval_Status        = p_Approval_Decision
+            ,      System_Discount_Status = CASE WHEN p_Approval_Decision = 'APPROVED'
+                                                 THEN 'PUBLISHED' ELSE 'DRAFT' END
+            ,      Is_Active              = CASE WHEN p_Approval_Decision = 'APPROVED'
+                                                 THEN 1 ELSE 0 END
+            ,      Updated_At             = UTC_TIMESTAMP()
+            ,      Updated_By             = p_Session_Key
+             WHERE System_Discount_Id = p_System_Discount_Id;
+
+        END IF;
+
+
+        -- =============================================================
+        --  RESULT SET
+        --  Was_Pending_Update is CAST so the JDBC driver returns a clean
+        --  integer rather than a loosely typed user variable.
+        -- =============================================================
+        SELECT sd.*
+        ,      CAST(@Was_Pending AS UNSIGNED) AS Was_Pending_Update
+          FROM client1.System_Discount sd
+         WHERE sd.System_Discount_Id = p_System_Discount_Id;
+
+        SET p_Result_Code = 1;
+    END TRY_PROC;
+
+    CALL client1.usp_Insert_User_Session_Log(
+             p_Session_Key, 'usp_Approve_System_Discount',
+             p_Result_Code, Log_Details);
+END$$
+
+DELIMITER ;
+
+
+
