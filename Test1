@@ -1,65 +1,51 @@
-input CreatePhysicalAddress {
-  type: String!
-  locationId: Int!
-  streetNumber: String!
-  streetName: String!
-  city: String!
-  state: String!
-  postalCode: String!
-  countryCode: String!
-  latitude: Float
-  longitude: Float
-  timezone: String
+@Transactional
+public UpdateSystemDiscountResponse updateSystemDiscount(UpdateSystemDiscountRequest request) {
+
+    convertDatesToUtcIfPresent(request);
+    Map<String, Object> systemDiscount = null;
+    ObjectMapper objectMapper = new ObjectMapper();
+    objectMapper.registerModule(new JavaTimeModule());
+    SystemDiscount sdObj = new SystemDiscount();
+    boolean needsApproval = Boolean.TRUE.equals(request.getManagerApprovalRequired());
+
+    if (needsApproval) {
+        CreateSystemDiscountRequest create = new CreateSystemDiscountRequest();
+        BeanUtils.copyProperties(request, create);
+        systemDiscount = systemDiscountDao.createSystemDiscount(create);
+        if (systemDiscount == null) {
+            throw new IllegalArgumentException("System discount not found for id=" + request.getSystemDiscountId());
+        }
+        sdObj = objectMapper.convertValue(systemDiscount, SystemDiscount.class);
+        log.info("Created pending child {} for discount {}. Original UNTOUCHED.", sdObj.getParentId(), sdObj.getId());
+        return new UpdateSystemDiscountResponse(sdObj.getId(), sdObj.getParentId(), status: "PENDING_APPROVAL");
+
+    } else {
+        systemDiscount = systemDiscountDao.updateSystemDiscount(request);
+        if (systemDiscount == null) {
+            throw new IllegalArgumentException("System discount not found for id=" + request.getSystemDiscountId());
+        }
+        sdObj = objectMapper.convertValue(systemDiscount, SystemDiscount.class);
+        log.info("System discount updated id={} location={} amenity={}", request.getSystemDiscountId(), request.getLocationId(), request.getAmenityId());
+
+        if (DiscountStatus.INACTIVE.name().equalsIgnoreCase(sdObj.getSystemDiscountStatus())) {
+            // New status is INACTIVE — deactivate the associated rule instead of regenerating it
+            Long ruleDefinitionId = ruleDefinitionDao.findByRuleTypeAndReferenceIdAndActiveTrue(
+                    "SYSTEM_DISCOUNT", sdObj.getId()).get("rule_definition_id") != null
+                    ? Long.valueOf(ruleDefinitionDao.findByRuleTypeAndReferenceIdAndActiveTrue(
+                        "SYSTEM_DISCOUNT", sdObj.getId()).get("rule_definition_id").toString())
+                    : null;
+
+            if (ruleDefinitionId != null) {
+                ruleDefinitionDao.deactivateRuleDefinition(ruleDefinitionId, request.getSessionKey());
+                getEngineService().reloadRules();
+                log.info("Rule deactivated for system discount id={}", sdObj.getId());
+            } else {
+                log.warn("No active rule found to deactivate for system discount id={}", sdObj.getId());
+            }
+        } else {
+            droolsRuleService.generateSystemDiscountRule(sdObj, changedBy: "ADMIN", request.getSessionKey());
+        }
+
+        return new UpdateSystemDiscountResponse(sdObj.getId(), sdObj.getParentId(), sdObj.getSystemDiscountStatus());
+    }
 }
-
-type Mutation {
-  createPhysicalAddress(request: CreatePhysicalAddress): SessionResponse
-}
-
-
-
-import {
-  createPhysicalAddress
-} from "../../service/location/physicalAddressService";
-
-export const physicalAddressResolvers = {
-  Mutation: {
-    createPhysicalAddress: async (_: any, { request }: any, ctx: any) => {
-      ctx.logger.info("Create Physical Address", { request });
-      return await createPhysicalAddress(request, ctx.token, ctx.logger);
-    },
-  },
-};
-
-
-
-import { httpClient } from "../../utils/http/httpClient";
-
-async function postAddressData(method: string, endpoint: string, request: any, token: string, logger: any) {
-  const baseUrl = process.env.SPRINGBOOT_BASE_ENDPOINT;
-  const url = `${baseUrl}/api/v1/physicaladdress${endpoint}`;
-  return await httpClient(
-    url,
-    {
-      method: method,
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${token}`,
-      },
-      body: method === "GET" ? undefined : request,
-      logger,
-    },
-  );
-}
-
-export async function createPhysicalAddress(request: any, token: string, logger: any) {
-  return await postAddressData("POST", "/create", request, token, logger);
-}
-
-
-
-
-import { physicalAddressTypeDefs } from "./physicalAddress/typeDefs";
-import { physicalAddressResolvers } from "./physicalAddress/resolvers";
-// add physicalAddressTypeDefs / physicalAddressResolvers to the merge arrays
-
