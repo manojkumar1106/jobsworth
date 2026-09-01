@@ -61,24 +61,33 @@ public ApiResponse<String> removeSystemDiscount(Integer systemDiscountId, String
 }
 
 
-DELIMITER $$
-
-CREATE OR REPLACE PROCEDURE usp_Get_Promotion_By_Code(
-    IN  p_Session_Key  VARCHAR(255),
-    IN  p_Promo_Code   VARCHAR(254),
-    IN  p_Promotion_Id INT,
-    OUT p_Result_Code  INT
-)
-BEGIN
-    SELECT *
-    FROM Promotion
-    WHERE (p_Promotion_Id IS NOT NULL AND Promotion_Id = p_Promotion_Id)
-       OR (p_Promotion_Id IS NULL AND Promo_Code = p_Promo_Code)
-    LIMIT 1;
-
-    SET p_Result_Code = 1;
-END$$
-
-DELIMITER ;
 
 
+SET @p_Result_Code = 0;
+
+CALL client1.usp_Create_System_Discount(
+    'sk-manoj',      -- p_Session_Key
+    1,                -- p_Location_Id
+    1,                -- p_Amenity_Id
+    31,               -- p_Parent_System_Discount_Id
+    '5% Wintere Sale',-- p_Title
+    'Happy Winter',   -- p_Display_Name
+    'catch',          -- p_Discount_Description
+    'PERCENTAGE',     -- p_Discount_Type
+    5.00,             -- p_Amount
+    2,                -- p_Min_Quantity
+    'ALL_USERS',      -- p_User_Type
+    1,                -- p_Channel_POS
+    1,                -- p_Channel_Web
+    '2026-08-31 20:49:03', -- p_Start_Date
+    '2026-10-30 21:48:03', -- p_End_Date
+    1,                -- p_Stackable
+    'MANOJ',          -- p_Stack_Group
+    2,                -- p_Priority
+    1,                -- p_Manager_Approval_Required
+    'manager.org',    -- p_Icon
+    'PUBLISHED',      -- p_System_Discount_Status
+    @p_Result_Code
+);
+
+SELECT @p_Result_Code;
