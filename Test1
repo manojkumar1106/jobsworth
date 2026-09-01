@@ -61,3 +61,24 @@ public ApiResponse<String> removeSystemDiscount(Integer systemDiscountId, String
 }
 
 
+DELIMITER $$
+
+CREATE OR REPLACE PROCEDURE usp_Get_Promotion_By_Code(
+    IN  p_Session_Key  VARCHAR(255),
+    IN  p_Promo_Code   VARCHAR(254),
+    IN  p_Promotion_Id INT,
+    OUT p_Result_Code  INT
+)
+BEGIN
+    SELECT *
+    FROM Promotion
+    WHERE (p_Promotion_Id IS NOT NULL AND Promotion_Id = p_Promotion_Id)
+       OR (p_Promotion_Id IS NULL AND Promo_Code = p_Promo_Code)
+    LIMIT 1;
+
+    SET p_Result_Code = 1;
+END$$
+
+DELIMITER ;
+
+
