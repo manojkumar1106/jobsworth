@@ -91,3 +91,14 @@ CALL client1.usp_Create_System_Discount(
 );
 
 SELECT @p_Result_Code;
+
+
+JsonSetter("parentSystemDiscountId")
+    public void setParentSystemDiscountId(Object value) {
+        this.parentSystemDiscountId = value != null ? String.valueOf(value) : null;
+    }
+
+    public String getParentSystemDiscountId() {
+        return parentSystemDiscountId;
+    }
+
