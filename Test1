@@ -1,69 +1,12 @@
-public Integer removeRuleDefinitionByReference(String ruleType, Integer referenceId, String sessionKey) {
-    Map<String, Object> params = new HashMap<>();
-    params.put("p_Session_Key", sessionKey);
-    params.put("p_Rule_Type", ruleType);
-    params.put("p_Reference_Id", referenceId);
-    return executeReturnId(procName: "usp_Remove_Rule_Definition_By_Reference", outParamName: "p_Result_Code", params);
-}
 
 
-public Integer removePromotion(Integer promotionId, String sessionKey) {
-    Map<String, Object> params = new HashMap<>();
-    params.put("p_Session_Key", sessionKey);
-    params.put("p_Promotion_Id", promotionId);
-    return executeReturnId(procName: "usp_Remove_Promotion", outParamName: "p_Result_Code", params);
-}
-
-
-
-@Transactional
-public ApiResponse<String> removePromotion(Integer promotionId, String sessionKey) {
-
-    Integer promoResult = promotionDao.removePromotion(promotionId, sessionKey);
-    if (promoResult == null || promoResult == 0) {
-        throw new IllegalArgumentException("Promotion not found for id=" + promotionId);
-    }
-
-    Integer ruleResult = ruleDefinitionDao.removeRuleDefinitionByReference("PROMOTION", promotionId, sessionKey);
-    log.info("Promotion {} removed. Rule rows affected: {}", promotionId, ruleResult);
-
-    getEngineService().reloadRules();
-    log.info("Rules reloaded after removing promotion id={}", promotionId);
-
-    return ApiResponse.success(message: "Promotion removed", data: null);
-}
-
-
-
-@Operation(summary = "Remove Promotion")
-@PostMapping("/remove/{id}")
-public ApiResponse<String> removePromotion(@PathVariable Integer id, @AuthenticationPrincipal Jwt jwt) {
-    String sessionKey = jwt != null ? jwt.getClaims().get("origin_jti").toString() : null;
-    return promotionService.removePromotion(id, sessionKey);
-}
-
-
-@Transactional
-public ApiResponse<String> removeSystemDiscount(Integer systemDiscountId, String sessionKey) {
-
-    Integer sdResult = systemDiscountDao.removeSystemDiscount(systemDiscountId, sessionKey);
-    if (sdResult == null || sdResult == 0) {
-        throw new IllegalArgumentException("System discount not found for id=" + systemDiscountId);
-    }
-
-    Integer ruleResult = ruleDefinitionDao.removeRuleDefinitionByReference("SYSTEM_DISCOUNT", systemDiscountId, sessionKey);
-    log.info("System discount {} removed. Rule rows affected: {}", systemDiscountId, ruleResult);
-
-    getEngineService().reloadRules();
-    log.info("Rules reloaded after removing system discount id={}", systemDiscountId);
-
-    return ApiResponse.success(message: "System discount removed", data: null);
-}
-
-
-
-
-SET @p_Result_Code = 0;
+    @Operation(summary = "Remove Rule Definition By Reference")
+    @PostMapping("/remove")
+    public ApiResponse<String> removeByReference(@RequestParam String ruleType,
+                                                   @RequestParam Integer referenceId,
+                                                   @RequestParam String sessionKey) {
+        return ruleDefinitionService.removeRuleDefinitionByReference(ruleType, referenceId, sessionKey);
+    }SET @p_Result_Code = 0;
 
 CALL client1.usp_Create_System_Discount(
     'sk-manoj',           -- p_Session_Key
