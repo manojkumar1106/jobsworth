@@ -35,3 +35,296 @@ CALL client1.usp_Create_System_Discount(
 
 SELECT @p_Result_Code;
 
+
+
+
+import { httpClient } from "../../utils/http/httpClient";
+
+async function postPromotionData(method: string, endpoint: string, request: any, token: string, logger: any) {
+  const sessionKey = getSessionKeyFromToken(token);
+  const baseUrl = process.env.SPRINGBOOT_PROMOTION_BASE_ENDPOINT;
+  const url = `${baseUrl}/api/promotions/${endpoint}`;
+  return await httpClient(
+    url,
+    {
+      method: method,
+      headers: { "Content-Type": "application/json" },
+      body: method === "GET" ? undefined : { ...request, sessionKey },
+    },
+    logger
+  );
+}
+
+async function postSystemDiscountData(method: string, endpoint: string, request: any, token: string, logger: any) {
+  const sessionKey = getSessionKeyFromToken(token);
+  const baseUrl = process.env.SPRINGBOOT_PROMOTION_BASE_ENDPOINT;
+  const url = `${baseUrl}/api/system-discounts/${endpoint}`;
+  return await httpClient(
+    url,
+    {
+      method: method,
+      headers: { "Content-Type": "application/json" },
+      body: method === "GET" ? undefined : { ...request, sessionKey },
+    },
+    logger
+  );
+}
+
+async function postRuleData(method: string, endpoint: string, request: any, token: string, logger: any) {
+  const sessionKey = getSessionKeyFromToken(token);
+  const baseUrl = process.env.SPRINGBOOT_PROMOTION_BASE_ENDPOINT;
+  const url = `${baseUrl}/api/${endpoint}`;
+  return await httpClient(
+    url,
+    {
+      method: method,
+      headers: { "Content-Type": "application/json" },
+      body: method === "GET" ? undefined : { ...request, sessionKey },
+    },
+    logger
+  );
+}
+
+function getSessionKeyFromToken(token: string): string {
+  const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString());
+  return payload.origin_jti;
+}
+
+// ---------- Promotion ----------
+export async function createPromotion(request: any, token: string, logger: any) {
+  return await postPromotionData("POST", "create", request, token, logger);
+}
+export async function updatePromotion(request: any, token: string, logger: any) {
+  return await postPromotionData("PUT", "update", request, token, logger);
+}
+export async function getAllPromotions(token: string, logger: any) {
+  const sessionKey = getSessionKeyFromToken(token);
+  return await postPromotionData("GET", `?sessionKey=${sessionKey}`, null, token, logger);
+}
+export async function getPromotionByCode(promoCode: string, token: string, logger: any) {
+  const sessionKey = getSessionKeyFromToken(token);
+  return await postPromotionData("GET", `code/${promoCode}?sessionKey=${sessionKey}`, null, token, logger);
+}
+export async function removePromotion(promotionId: number, token: string, logger: any) {
+  const sessionKey = getSessionKeyFromToken(token);
+  return await postPromotionData("POST", `remove/${promotionId}?sessionKey=${sessionKey}`, null, token, logger);
+}
+
+// ---------- System Discount ----------
+export async function createSystemDiscount(request: any, token: string, logger: any) {
+  return await postSystemDiscountData("POST", "create", request, token, logger);
+}
+export async function updateSystemDiscount(request: any, token: string, logger: any) {
+  return await postSystemDiscountData("PUT", "update", request, token, logger);
+}
+export async function getAllSystemDiscounts(token: string, logger: any) {
+  const sessionKey = getSessionKeyFromToken(token);
+  return await postSystemDiscountData("GET", `?sessionKey=${sessionKey}`, null, token, logger);
+}
+export async function approveSystemDiscount(id: number, decision: string, rejectionReason: string, token: string, logger: any) {
+  const sessionKey = getSessionKeyFromToken(token);
+  return await postSystemDiscountData(
+    "PUT",
+    `${id}/approve?sessionKey=${sessionKey}&decision=${decision}&rejectionReason=${encodeURIComponent(rejectionReason || "")}`,
+    null,
+    token,
+    logger
+  );
+}
+export async function removeSystemDiscount(id: number, token: string, logger: any) {
+  const sessionKey = getSessionKeyFromToken(token);
+  return await postSystemDiscountData("POST", `remove/${id}?sessionKey=${sessionKey}`, null, token, logger);
+}
+
+// ---------- Rule Engine / Rule Definition ----------
+export async function reloadRules(token: string, logger: any) {
+  return await postRuleData("POST", "rules/reload", null, token, logger);
+}
+export async function getAllRuleDefinitions(token: string, logger: any) {
+  const sessionKey = getSessionKeyFromToken(token);
+  return await postRuleData("GET", `rule-definitions?sessionKey=${sessionKey}`, null, token, logger);
+}
+export async function removeRuleDefinitionByReference(ruleType: string, referenceId: number, token: string, logger: any) {
+  const sessionKey = getSessionKeyFromToken(token);
+  return await postRuleData(
+    "POST",
+    `rule-definitions/remove?ruleType=${ruleType}&referenceId=${referenceId}&sessionKey=${sessionKey}`,
+    null,
+    token,
+    logger
+  );
+}
+
+
+
+
+
+export const promotionsAndDiscountsTypeDefs = `
+  input CreatePromotion {
+    locationId: Int!
+    amenityId: Int!
+    promotionId: Int
+    amount: Float!
+    discountType: String!
+    displayMessage: String
+    applyFullCart: Boolean
+    category: String
+    ticketType: String
+    channelPos: Boolean
+    channelWeb: Boolean
+    startDate: String
+    endDate: String
+    maxSelectablePerGroup: Int
+    priority: Int
+    promoCode: String
+    redemptionMethod: String
+    selectionGroup: String
+    stackGroup: String
+    stackable: Boolean
+    promoStatus: String
+    usageLimit: Int
+  }
+
+  input CreateSystemDiscount {
+    locationId: Int!
+    amenityId: Int!
+    parentSystemDiscountId: String
+    title: String!
+    displayName: String
+    discountDescription: String
+    discountType: String!
+    amount: Float!
+    minQuantity: Int
+    userType: String
+    channelPos: Boolean
+    channelWeb: Boolean
+    startDate: String
+    endDate: String
+    stackable: Boolean
+    stackGroup: String
+    priority: Int
+    managerApprovalRequired: Boolean
+    icon: String
+    systemDiscountStatus: String
+  }
+
+  input UpdateSystemDiscount {
+    systemDiscountId: Int!
+    locationId: Int
+    amenityId: Int
+    parentSystemDiscountId: String
+    title: String
+    displayName: String
+    discountDescription: String
+    discountType: String
+    amount: Float
+    minQuantity: Int
+    userType: String
+    channelPos: Boolean
+    channelWeb: Boolean
+    startDate: String
+    endDate: String
+    stackable: Boolean
+    stackGroup: String
+    priority: Int
+    managerApprovalRequired: Boolean
+    icon: String
+    systemDiscountStatus: String
+  }
+
+  type Query {
+    getAllPromotions: SessionResponse
+    getPromotionByCode(promoCode: String!): SessionResponse
+    getAllSystemDiscounts: SessionResponse
+    getAllRuleDefinitions: SessionResponse
+  }
+
+  type Mutation {
+    createPromotion(request: CreatePromotion): SessionResponse
+    updatePromotion(request: CreatePromotion): SessionResponse
+    removePromotion(promotionId: Int!): SessionResponse
+
+    createSystemDiscount(request: CreateSystemDiscount): SessionResponse
+    updateSystemDiscount(request: UpdateSystemDiscount): SessionResponse
+    approveSystemDiscount(id: Int!, decision: String!, rejectionReason: String): SessionResponse
+    removeSystemDiscount(id: Int!): SessionResponse
+
+    reloadRules: SessionResponse
+    removeRuleDefinitionByReference(ruleType: String!, referenceId: Int!): SessionResponse
+  }
+`;
+
+
+
+
+
+
+import {
+  createPromotion, updatePromotion, getAllPromotions, getPromotionByCode, removePromotion,
+  createSystemDiscount, updateSystemDiscount, getAllSystemDiscounts, approveSystemDiscount, removeSystemDiscount,
+  reloadRules, getAllRuleDefinitions, removeRuleDefinitionByReference
+} from "../../service/promotionsAndDiscounts/promotionsAndDiscountsService";
+
+export const promotionsAndDiscountsResolvers = {
+  Query: {
+    getAllPromotions: async (_: any, __: any, ctx: any) => {
+      ctx.logger.info("Fetch All Promotions");
+      return await getAllPromotions(ctx.token, ctx.logger);
+    },
+    getPromotionByCode: async (_: any, { promoCode }: any, ctx: any) => {
+      ctx.logger.info("Fetch Promotion By Code", { promoCode });
+      return await getPromotionByCode(promoCode, ctx.token, ctx.logger);
+    },
+    getAllSystemDiscounts: async (_: any, __: any, ctx: any) => {
+      ctx.logger.info("Fetch All System Discounts");
+      return await getAllSystemDiscounts(ctx.token, ctx.logger);
+    },
+    getAllRuleDefinitions: async (_: any, __: any, ctx: any) => {
+      ctx.logger.info("Fetch All Rule Definitions");
+      return await getAllRuleDefinitions(ctx.token, ctx.logger);
+    },
+  },
+  Mutation: {
+    createPromotion: async (_: any, { request }: any, ctx: any) => {
+      ctx.logger.info("Create Promotion", { request });
+      return await createPromotion(request, ctx.token, ctx.logger);
+    },
+    updatePromotion: async (_: any, { request }: any, ctx: any) => {
+      ctx.logger.info("Update Promotion", { request });
+      return await updatePromotion(request, ctx.token, ctx.logger);
+    },
+    removePromotion: async (_: any, { promotionId }: any, ctx: any) => {
+      ctx.logger.info("Remove Promotion", { promotionId });
+      return await removePromotion(promotionId, ctx.token, ctx.logger);
+    },
+
+    createSystemDiscount: async (_: any, { request }: any, ctx: any) => {
+      ctx.logger.info("Create System Discount", { request });
+      return await createSystemDiscount(request, ctx.token, ctx.logger);
+    },
+    updateSystemDiscount: async (_: any, { request }: any, ctx: any) => {
+      ctx.logger.info("Update System Discount", { request });
+      return await updateSystemDiscount(request, ctx.token, ctx.logger);
+    },
+    approveSystemDiscount: async (_: any, { id, decision, rejectionReason }: any, ctx: any) => {
+      ctx.logger.info("Approve System Discount", { id, decision });
+      return await approveSystemDiscount(id, decision, rejectionReason, ctx.token, ctx.logger);
+    },
+    removeSystemDiscount: async (_: any, { id }: any, ctx: any) => {
+      ctx.logger.info("Remove System Discount", { id });
+      return await removeSystemDiscount(id, ctx.token, ctx.logger);
+    },
+
+    reloadRules: async (_: any, __: any, ctx: any) => {
+      ctx.logger.info("Reload Rules");
+      return await reloadRules(ctx.token, ctx.logger);
+    },
+    removeRuleDefinitionByReference: async (_: any, { ruleType, referenceId }: any, ctx: any) => {
+      ctx.logger.info("Remove Rule Definition By Reference", { ruleType, referenceId });
+      return await removeRuleDefinitionByReference(ruleType, referenceId, ctx.token, ctx.logger);
+    },
+  },
+};
+
+
+
