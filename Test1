@@ -328,3 +328,16 @@ export const promotionsAndDiscountsResolvers = {
 
 
 
+
+IF EXISTS (
+    SELECT 1
+    FROM client1.System_Discount
+    WHERE Title = TRIM(p_Title)
+      AND System_Discount_Id <> p_System_Discount_Id
+    LIMIT 1
+) THEN
+    SET Log_Details = 'p_Title : Duplicate Title';
+    LEAVE TRY_PROC;
+END IF;
+
+
