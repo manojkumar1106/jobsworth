@@ -1,63 +1,26 @@
-public Map<String, Object> getPhysicalAddress(String sessionKey, Integer locationId) {
-    Map<String, Object> params = new HashMap<>();
-    params.put("p_Session_Key", sessionKey);
-    params.put("p_Location_Id", locationId);
-    return executeSingle(procName: "usp_Get_Physical_Address", params);
-}
-
-public Integer updatePhysicalAddress(UpdatePhysicalAddressRequest req) {
-    Map<String, Object> params = new HashMap<>();
-    params.put("p_Session_Key", req.getSessionKey());
-    params.put("p_Physical_Address_Id", req.getPhysicalAddressId());
-    params.put("p_Address_Line_1", req.getAddressLine1());
-    params.put("p_Address_Line_2", req.getAddressLine2());
-    params.put("p_City", req.getCity());
-    params.put("p_State", req.getState());
-    params.put("p_Zip_Code", req.getZipCode());
-    params.put("p_Country_Code", req.getCountryCode());
-    params.put("p_Latitude", req.getLatitude());
-    params.put("p_Longitude", req.getLongitude());
-    params.put("p_Timezone", req.getTimezone());
-    return executeReturnId(procName: "usp_Update_Physical_Address", outParamName: "p_Result_Code", params);
-}
-
-
-
-Map<String, Object> getPhysicalAddress(String sessionKey, Integer locationId);
-Integer updatePhysicalAddress(UpdatePhysicalAddressRequest req);
-
+// ADD to com.hlt.api.service.serviceimpl.PhysicalAddressService,
+// alongside the existing createPhysicalAddress/getPhysicalAddress overrides.
+// Reverted to log physicalAddressId, matching the Dao's real param
+// (p_Physical_Address_Id, per the live "Call stored procedure" dialog).
 
 @Override
-public Map<String, Object> getPhysicalAddress(String sessionKey, Integer locationId) {
-    Map<String, Object> address = physicalAddressDao.getPhysicalAddress(sessionKey, locationId);
-    if (address == null) {
-        throw new IllegalArgumentException("Physical address not found for locationId=" + locationId);
-    }
-    return address;
-}
-
-@Override
-public Integer updatePhysicalAddress(UpdatePhysicalAddressRequest req) {
-    Integer result = physicalAddressDao.updatePhysicalAddress(req);
-    if (result == null || result == 0) {
-        throw new IllegalArgumentException("Physical address not found for id=" + req.getPhysicalAddressId());
-    }
-    return result;
+public void updatePhysicalAddress(TicketRequest req) {
+    log.info("Updating Physical Address: {}", req.getPhysicalAddressId());
+    physicalAddressDao.updatePhysicalAddress(req);
 }
 
 
 
-
-@Operation(summary = "Get Physical Address")
-@GetMapping("/getbylocation")
-public ApiResponse<?> getPhysicalAddress(@RequestParam String sessionKey, @RequestParam Integer locationId) {
-    Map<String, Object> address = physicalAddressService.getPhysicalAddress(sessionKey, locationId);
-    return ApiResponse.success(message: "Physical Address Fetched", address);
-}
+// ADD to com.hlt.api.controller.PhysicalAddressController,
+// alongside createPhysicalAddress / getPhysicalAddress.
+// Same JWT session-key pattern already used by those two.
 
 @Operation(summary = "Update Physical Address")
 @PutMapping("/update")
-public ApiResponse<String> updatePhysicalAddress(@RequestBody UpdatePhysicalAddressRequest req) {
+public ApiResponse<String> updatePhysicalAddress(@RequestBody TicketRequest req, @AuthenticationPrincipal Jwt jwt) {
+    if (jwt != null) {
+        req.setSessionKey(jwt.getClaims().get("origin_jti").toString());
+    }
     physicalAddressService.updatePhysicalAddress(req);
-    return ApiResponse.success(message: "Physical Address Updated", data: null);
+    return ApiResponse.success("Physical Address Updated", null);
 }
