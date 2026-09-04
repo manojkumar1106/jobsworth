@@ -1,343 +1,63 @@
+public Map<String, Object> getPhysicalAddress(String sessionKey, Integer locationId) {
+    Map<String, Object> params = new HashMap<>();
+    params.put("p_Session_Key", sessionKey);
+    params.put("p_Location_Id", locationId);
+    return executeSingle(procName: "usp_Get_Physical_Address", params);
+}
 
-
-    @Operation(summary = "Remove Rule Definition By Reference")
-    @PostMapping("/remove")
-    public ApiResponse<String> removeByReference(@RequestParam String ruleType,
-                                                   @RequestParam Integer referenceId,
-                                                   @RequestParam String sessionKey) {
-        return ruleDefinitionService.removeRuleDefinitionByReference(ruleType, referenceId, sessionKey);
-    }SET @p_Result_Code = 0;
-
-CALL client1.usp_Create_System_Discount(
-    'sk-manoj',           -- p_Session_Key
-    1,                     -- p_Location_Id
-    1,                     -- p_Amenity_Id
-    '5% Wintere Sale',     -- p_Title
-    'Happy Winter',        -- p_Display_Name
-    'catch',                -- p_Discount_Description
-    'PERCENTAGE',           -- p_Discount_Type
-    5.00,                   -- p_Amount
-    2,                      -- p_Min_Quantity
-    'ALL_USERS',            -- p_User_Type
-    1,                      -- p_Channel_POS
-    1,                      -- p_Channel_Web
-    '2026-09-01 00:49:03',  -- p_Start_Date
-    '2026-10-31 01:48:03',  -- p_End_Date
-    1,                      -- p_Stackable
-    'MANOJ',                -- p_Stack_Group
-    2,                      -- p_Priority
-    1,                      -- p_Manager_Approval_Required
-    'manager.org',          -- p_Icon
-    'PUBLISHED',            -- p_System_Discount_Status
-    '31',                   -- p_Parent_System_Discount_Id
-    @p_Result_Code
-);
-
-SELECT @p_Result_Code;
+public Integer updatePhysicalAddress(UpdatePhysicalAddressRequest req) {
+    Map<String, Object> params = new HashMap<>();
+    params.put("p_Session_Key", req.getSessionKey());
+    params.put("p_Physical_Address_Id", req.getPhysicalAddressId());
+    params.put("p_Address_Line_1", req.getAddressLine1());
+    params.put("p_Address_Line_2", req.getAddressLine2());
+    params.put("p_City", req.getCity());
+    params.put("p_State", req.getState());
+    params.put("p_Zip_Code", req.getZipCode());
+    params.put("p_Country_Code", req.getCountryCode());
+    params.put("p_Latitude", req.getLatitude());
+    params.put("p_Longitude", req.getLongitude());
+    params.put("p_Timezone", req.getTimezone());
+    return executeReturnId(procName: "usp_Update_Physical_Address", outParamName: "p_Result_Code", params);
+}
 
 
 
+Map<String, Object> getPhysicalAddress(String sessionKey, Integer locationId);
+Integer updatePhysicalAddress(UpdatePhysicalAddressRequest req);
 
-import { httpClient } from "../../utils/http/httpClient";
 
-async function postPromotionData(method: string, endpoint: string, request: any, token: string, logger: any) {
-  const sessionKey = getSessionKeyFromToken(token);
-  const baseUrl = process.env.SPRINGBOOT_PROMOTION_BASE_ENDPOINT;
-  const url = `${baseUrl}/api/promotions/${endpoint}`;
-  return await httpClient(
-    url,
-    {
-      method: method,
-      headers: { "Content-Type": "application/json" },
-      body: method === "GET" ? undefined : { ...request, sessionKey },
-    },
-    logger
-  );
+@Override
+public Map<String, Object> getPhysicalAddress(String sessionKey, Integer locationId) {
+    Map<String, Object> address = physicalAddressDao.getPhysicalAddress(sessionKey, locationId);
+    if (address == null) {
+        throw new IllegalArgumentException("Physical address not found for locationId=" + locationId);
+    }
+    return address;
 }
 
-async function postSystemDiscountData(method: string, endpoint: string, request: any, token: string, logger: any) {
-  const sessionKey = getSessionKeyFromToken(token);
-  const baseUrl = process.env.SPRINGBOOT_PROMOTION_BASE_ENDPOINT;
-  const url = `${baseUrl}/api/system-discounts/${endpoint}`;
-  return await httpClient(
-    url,
-    {
-      method: method,
-      headers: { "Content-Type": "application/json" },
-      body: method === "GET" ? undefined : { ...request, sessionKey },
-    },
-    logger
-  );
-}
-
-async function postRuleData(method: string, endpoint: string, request: any, token: string, logger: any) {
-  const sessionKey = getSessionKeyFromToken(token);
-  const baseUrl = process.env.SPRINGBOOT_PROMOTION_BASE_ENDPOINT;
-  const url = `${baseUrl}/api/${endpoint}`;
-  return await httpClient(
-    url,
-    {
-      method: method,
-      headers: { "Content-Type": "application/json" },
-      body: method === "GET" ? undefined : { ...request, sessionKey },
-    },
-    logger
-  );
-}
-
-function getSessionKeyFromToken(token: string): string {
-  const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString());
-  return payload.origin_jti;
-}
-
-// ---------- Promotion ----------
-export async function createPromotion(request: any, token: string, logger: any) {
-  return await postPromotionData("POST", "create", request, token, logger);
-}
-export async function updatePromotion(request: any, token: string, logger: any) {
-  return await postPromotionData("PUT", "update", request, token, logger);
-}
-export async function getAllPromotions(token: string, logger: any) {
-  const sessionKey = getSessionKeyFromToken(token);
-  return await postPromotionData("GET", `?sessionKey=${sessionKey}`, null, token, logger);
-}
-export async function getPromotionByCode(promoCode: string, token: string, logger: any) {
-  const sessionKey = getSessionKeyFromToken(token);
-  return await postPromotionData("GET", `code/${promoCode}?sessionKey=${sessionKey}`, null, token, logger);
-}
-export async function removePromotion(promotionId: number, token: string, logger: any) {
-  const sessionKey = getSessionKeyFromToken(token);
-  return await postPromotionData("POST", `remove/${promotionId}?sessionKey=${sessionKey}`, null, token, logger);
-}
-
-// ---------- System Discount ----------
-export async function createSystemDiscount(request: any, token: string, logger: any) {
-  return await postSystemDiscountData("POST", "create", request, token, logger);
-}
-export async function updateSystemDiscount(request: any, token: string, logger: any) {
-  return await postSystemDiscountData("PUT", "update", request, token, logger);
-}
-export async function getAllSystemDiscounts(token: string, logger: any) {
-  const sessionKey = getSessionKeyFromToken(token);
-  return await postSystemDiscountData("GET", `?sessionKey=${sessionKey}`, null, token, logger);
-}
-export async function approveSystemDiscount(id: number, decision: string, rejectionReason: string, token: string, logger: any) {
-  const sessionKey = getSessionKeyFromToken(token);
-  return await postSystemDiscountData(
-    "PUT",
-    `${id}/approve?sessionKey=${sessionKey}&decision=${decision}&rejectionReason=${encodeURIComponent(rejectionReason || "")}`,
-    null,
-    token,
-    logger
-  );
-}
-export async function removeSystemDiscount(id: number, token: string, logger: any) {
-  const sessionKey = getSessionKeyFromToken(token);
-  return await postSystemDiscountData("POST", `remove/${id}?sessionKey=${sessionKey}`, null, token, logger);
-}
-
-// ---------- Rule Engine / Rule Definition ----------
-export async function reloadRules(token: string, logger: any) {
-  return await postRuleData("POST", "rules/reload", null, token, logger);
-}
-export async function getAllRuleDefinitions(token: string, logger: any) {
-  const sessionKey = getSessionKeyFromToken(token);
-  return await postRuleData("GET", `rule-definitions?sessionKey=${sessionKey}`, null, token, logger);
-}
-export async function removeRuleDefinitionByReference(ruleType: string, referenceId: number, token: string, logger: any) {
-  const sessionKey = getSessionKeyFromToken(token);
-  return await postRuleData(
-    "POST",
-    `rule-definitions/remove?ruleType=${ruleType}&referenceId=${referenceId}&sessionKey=${sessionKey}`,
-    null,
-    token,
-    logger
-  );
+@Override
+public Integer updatePhysicalAddress(UpdatePhysicalAddressRequest req) {
+    Integer result = physicalAddressDao.updatePhysicalAddress(req);
+    if (result == null || result == 0) {
+        throw new IllegalArgumentException("Physical address not found for id=" + req.getPhysicalAddressId());
+    }
+    return result;
 }
 
 
 
 
+@Operation(summary = "Get Physical Address")
+@GetMapping("/getbylocation")
+public ApiResponse<?> getPhysicalAddress(@RequestParam String sessionKey, @RequestParam Integer locationId) {
+    Map<String, Object> address = physicalAddressService.getPhysicalAddress(sessionKey, locationId);
+    return ApiResponse.success(message: "Physical Address Fetched", address);
+}
 
-export const promotionsAndDiscountsTypeDefs = `
-  input CreatePromotion {
-    locationId: Int!
-    amenityId: Int!
-    promotionId: Int
-    amount: Float!
-    discountType: String!
-    displayMessage: String
-    applyFullCart: Boolean
-    category: String
-    ticketType: String
-    channelPos: Boolean
-    channelWeb: Boolean
-    startDate: String
-    endDate: String
-    maxSelectablePerGroup: Int
-    priority: Int
-    promoCode: String
-    redemptionMethod: String
-    selectionGroup: String
-    stackGroup: String
-    stackable: Boolean
-    promoStatus: String
-    usageLimit: Int
-  }
-
-  input CreateSystemDiscount {
-    locationId: Int!
-    amenityId: Int!
-    parentSystemDiscountId: String
-    title: String!
-    displayName: String
-    discountDescription: String
-    discountType: String!
-    amount: Float!
-    minQuantity: Int
-    userType: String
-    channelPos: Boolean
-    channelWeb: Boolean
-    startDate: String
-    endDate: String
-    stackable: Boolean
-    stackGroup: String
-    priority: Int
-    managerApprovalRequired: Boolean
-    icon: String
-    systemDiscountStatus: String
-  }
-
-  input UpdateSystemDiscount {
-    systemDiscountId: Int!
-    locationId: Int
-    amenityId: Int
-    parentSystemDiscountId: String
-    title: String
-    displayName: String
-    discountDescription: String
-    discountType: String
-    amount: Float
-    minQuantity: Int
-    userType: String
-    channelPos: Boolean
-    channelWeb: Boolean
-    startDate: String
-    endDate: String
-    stackable: Boolean
-    stackGroup: String
-    priority: Int
-    managerApprovalRequired: Boolean
-    icon: String
-    systemDiscountStatus: String
-  }
-
-  type Query {
-    getAllPromotions: SessionResponse
-    getPromotionByCode(promoCode: String!): SessionResponse
-    getAllSystemDiscounts: SessionResponse
-    getAllRuleDefinitions: SessionResponse
-  }
-
-  type Mutation {
-    createPromotion(request: CreatePromotion): SessionResponse
-    updatePromotion(request: CreatePromotion): SessionResponse
-    removePromotion(promotionId: Int!): SessionResponse
-
-    createSystemDiscount(request: CreateSystemDiscount): SessionResponse
-    updateSystemDiscount(request: UpdateSystemDiscount): SessionResponse
-    approveSystemDiscount(id: Int!, decision: String!, rejectionReason: String): SessionResponse
-    removeSystemDiscount(id: Int!): SessionResponse
-
-    reloadRules: SessionResponse
-    removeRuleDefinitionByReference(ruleType: String!, referenceId: Int!): SessionResponse
-  }
-`;
-
-
-
-
-
-
-import {
-  createPromotion, updatePromotion, getAllPromotions, getPromotionByCode, removePromotion,
-  createSystemDiscount, updateSystemDiscount, getAllSystemDiscounts, approveSystemDiscount, removeSystemDiscount,
-  reloadRules, getAllRuleDefinitions, removeRuleDefinitionByReference
-} from "../../service/promotionsAndDiscounts/promotionsAndDiscountsService";
-
-export const promotionsAndDiscountsResolvers = {
-  Query: {
-    getAllPromotions: async (_: any, __: any, ctx: any) => {
-      ctx.logger.info("Fetch All Promotions");
-      return await getAllPromotions(ctx.token, ctx.logger);
-    },
-    getPromotionByCode: async (_: any, { promoCode }: any, ctx: any) => {
-      ctx.logger.info("Fetch Promotion By Code", { promoCode });
-      return await getPromotionByCode(promoCode, ctx.token, ctx.logger);
-    },
-    getAllSystemDiscounts: async (_: any, __: any, ctx: any) => {
-      ctx.logger.info("Fetch All System Discounts");
-      return await getAllSystemDiscounts(ctx.token, ctx.logger);
-    },
-    getAllRuleDefinitions: async (_: any, __: any, ctx: any) => {
-      ctx.logger.info("Fetch All Rule Definitions");
-      return await getAllRuleDefinitions(ctx.token, ctx.logger);
-    },
-  },
-  Mutation: {
-    createPromotion: async (_: any, { request }: any, ctx: any) => {
-      ctx.logger.info("Create Promotion", { request });
-      return await createPromotion(request, ctx.token, ctx.logger);
-    },
-    updatePromotion: async (_: any, { request }: any, ctx: any) => {
-      ctx.logger.info("Update Promotion", { request });
-      return await updatePromotion(request, ctx.token, ctx.logger);
-    },
-    removePromotion: async (_: any, { promotionId }: any, ctx: any) => {
-      ctx.logger.info("Remove Promotion", { promotionId });
-      return await removePromotion(promotionId, ctx.token, ctx.logger);
-    },
-
-    createSystemDiscount: async (_: any, { request }: any, ctx: any) => {
-      ctx.logger.info("Create System Discount", { request });
-      return await createSystemDiscount(request, ctx.token, ctx.logger);
-    },
-    updateSystemDiscount: async (_: any, { request }: any, ctx: any) => {
-      ctx.logger.info("Update System Discount", { request });
-      return await updateSystemDiscount(request, ctx.token, ctx.logger);
-    },
-    approveSystemDiscount: async (_: any, { id, decision, rejectionReason }: any, ctx: any) => {
-      ctx.logger.info("Approve System Discount", { id, decision });
-      return await approveSystemDiscount(id, decision, rejectionReason, ctx.token, ctx.logger);
-    },
-    removeSystemDiscount: async (_: any, { id }: any, ctx: any) => {
-      ctx.logger.info("Remove System Discount", { id });
-      return await removeSystemDiscount(id, ctx.token, ctx.logger);
-    },
-
-    reloadRules: async (_: any, __: any, ctx: any) => {
-      ctx.logger.info("Reload Rules");
-      return await reloadRules(ctx.token, ctx.logger);
-    },
-    removeRuleDefinitionByReference: async (_: any, { ruleType, referenceId }: any, ctx: any) => {
-      ctx.logger.info("Remove Rule Definition By Reference", { ruleType, referenceId });
-      return await removeRuleDefinitionByReference(ruleType, referenceId, ctx.token, ctx.logger);
-    },
-  },
-};
-
-
-
-
-IF EXISTS (
-    SELECT 1
-    FROM client1.System_Discount
-    WHERE Title = TRIM(p_Title)
-      AND System_Discount_Id <> p_System_Discount_Id
-    LIMIT 1
-) THEN
-    SET Log_Details = 'p_Title : Duplicate Title';
-    LEAVE TRY_PROC;
-END IF;
-
-
+@Operation(summary = "Update Physical Address")
+@PutMapping("/update")
+public ApiResponse<String> updatePhysicalAddress(@RequestBody UpdatePhysicalAddressRequest req) {
+    physicalAddressService.updatePhysicalAddress(req);
+    return ApiResponse.success(message: "Physical Address Updated", data: null);
+}
