@@ -1,26 +1,125 @@
-// ADD to com.hlt.api.service.serviceimpl.PhysicalAddressService,
-// alongside the existing createPhysicalAddress/getPhysicalAddress overrides.
-// Reverted to log physicalAddressId, matching the Dao's real param
-// (p_Physical_Address_Id, per the live "Call stored procedure" dialog).
+import { httpClient } from "../../utils/http/httpClient";
 
-@Override
-public void updatePhysicalAddress(TicketRequest req) {
-    log.info("Updating Physical Address: {}", req.getPhysicalAddressId());
-    physicalAddressDao.updatePhysicalAddress(req);
+async function callAddressApi(method: string, endpoint: string, request: any, token: string, logger: any) {
+  const baseUrl = process.env.SPRINGBOOT_BASE_ENDPOINT;
+  const url = `${baseUrl}/api/v1/physicaladdress${endpoint}`;
+  return await httpClient(
+    url,
+    {
+      method: method,
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${token}`,
+      },
+      // NOTE: unlike a typical REST client, this always sends the body —
+      // even for GET — because the Java controller's /getbylocation is a
+      // @GetMapping that still expects @RequestBody TicketRequest req.
+      // Dropping the body on GET (as the old postAddressData did) would
+      // silently send a null request to that endpoint.
+      body: request,
+    },
+    logger,
+  );
+}
+
+export async function createPhysicalAddress(request: any, token: string, logger: any) {
+  return await callAddressApi("POST", "/create", request, token, logger);
+}
+
+export async function updatePhysicalAddress(request: any, token: string, logger: any) {
+  return await callAddressApi("PUT", "/update", request, token, logger);
+}
+
+export async function getPhysicalAddress(request: any, token: string, logger: any) {
+  return await callAddressApi("GET", "/getbylocation", request, token, logger);
 }
 
 
 
-// ADD to com.hlt.api.controller.PhysicalAddressController,
-// alongside createPhysicalAddress / getPhysicalAddress.
-// Same JWT session-key pattern already used by those two.
 
-@Operation(summary = "Update Physical Address")
-@PutMapping("/update")
-public ApiResponse<String> updatePhysicalAddress(@RequestBody TicketRequest req, @AuthenticationPrincipal Jwt jwt) {
-    if (jwt != null) {
-        req.setSessionKey(jwt.getClaims().get("origin_jti").toString());
-    }
-    physicalAddressService.updatePhysicalAddress(req);
-    return ApiResponse.success("Physical Address Updated", null);
-}
+
+
+import {
+  createPhysicalAddress,
+  updatePhysicalAddress,
+  getPhysicalAddress,
+} from "../../service/physicaladdress/physicalAddressService";
+
+export const physicalAddressResolvers = {
+  Mutation: {
+    createPhysicalAddress: async (_: any, { request }: any, ctx: any) => {
+      ctx.logger.info("Create Physical Address", { request });
+      return await createPhysicalAddress(request, ctx.token, ctx.logger);
+    },
+    updatePhysicalAddress: async (_: any, { request }: any, ctx: any) => {
+      ctx.logger.info("Update Physical Address", { request });
+      return await updatePhysicalAddress(request, ctx.token, ctx.logger);
+    },
+  },
+  Query: {
+    physicalAddress: async (_: any, { request }: any, ctx: any) => {
+      ctx.logger.info("Get Physical Address", { request });
+      return await getPhysicalAddress(request, ctx.token, ctx.logger);
+    },
+  },
+};
+
+
+
+export const physicalAddressTypeDefs = `
+  input CreatePhysicalAddress {
+    type: String!
+    locationFunctionId: Int!
+    addressLine1: String!
+    addressLine2: String!
+    city: String!
+    state: String!
+    zipCode: String!
+    countryCode: String!
+    latitude: Float
+    longitude: Float
+    timezone: String
+    isDaylightActive: Boolean
+  }
+
+  input UpdatePhysicalAddress {
+    physicalAddressId: Int!
+    addressLine1: String
+    addressLine2: String
+    city: String
+    state: String
+    zipCode: String
+    countryCode: String
+    latitude: Float
+    longitude: Float
+    timezone: String
+    isDaylightActive: Boolean
+  }
+
+  input GetPhysicalAddress {
+    locationId: Int!
+  }
+
+  type PhysicalAddressResponse {
+    addressLine1: String
+    addressLine2: String
+    city: String
+    state: String
+    zipCode: String
+    countryCode: String
+    latitude: Float
+    longitude: Float
+    timezone: String
+    isDaylightActive: Boolean
+  }
+
+  type Mutation {
+    createPhysicalAddress(request: CreatePhysicalAddress): SessionResponse
+    updatePhysicalAddress(request: UpdatePhysicalAddress): SessionResponse
+  }
+
+  type Query {
+    physicalAddress(request: GetPhysicalAddress): PhysicalAddressResponse
+  }
+`;
+
