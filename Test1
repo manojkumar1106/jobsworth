@@ -1,1 +1,5 @@
+
+https://internal-snd-tkts-soapi-alb-477291834.us-east-1.elb.amazonaws.com/api/promotions?sessionKey=68bdf068-646d-4d1b-835d-c8439ca7b9aa
+
+
 curl.exe -i "https://sndpromo.hlticketing.com/api/promotions?sessionKey=68bdf068-646d-4d1b-835d-c8439ca7b9aa" -H "Authorization: Bearer YOUR_TOKEN"
