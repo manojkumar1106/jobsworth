@@ -1,5 +1,757 @@
+// =====================================================================
+// PATCH — append these fields + getters/setters into your existing
+// com.hlt.api.dtos.request.TicketRequest class (same file shown in
+// PhysicalAddressController.java's TicketRequest.java, right after the
+// "//PhysicalAddress" block). Do not create a new file for this —
+// TicketRequest already carries sessionKey, which these DAO/Service/
+// Controller changes rely on via req.getSessionKey().
+// =====================================================================
 
-https://internal-snd-tkts-soapi-alb-477291834.us-east-1.elb.amazonaws.com/api/promotions?sessionKey=68bdf068-646d-4d1b-835d-c8439ca7b9aa
+    // Sales Funnel
+    private Integer salesFunnelId;          // set from @PathVariable on update/delete
+    private Integer locationId;
+    private String salesFunnelName;
+    private String urlSlug;
+    private Boolean isActive;
+    private Boolean isDayRequired;
+    private java.time.LocalTime salesCutoffLocalTime;   // client-entered local time (e.g. from the "Sales Cut-off Time" field in Figma)
+    private java.time.LocalTime salesCutoffUtc;          // resolved server-side via TimezoneConverter + Physical_Address timezone lookup
+    private Boolean isWebEnabled;
+    private Boolean isPosEnabled;
+    private java.util.List<Long> amenityIds;             // list index == funnelOrder on insert
+
+    public Integer getSalesFunnelId() {
+        return salesFunnelId;
+    }
+
+    public void setSalesFunnelId(Integer salesFunnelId) {
+        this.salesFunnelId = salesFunnelId;
+    }
+
+    public Integer getLocationId() {
+        return locationId;
+    }
+
+    public void setLocationId(Integer locationId) {
+        this.locationId = locationId;
+    }
+
+    public String getSalesFunnelName() {
+        return salesFunnelName;
+    }
+
+    public void setSalesFunnelName(String salesFunnelName) {
+        this.salesFunnelName = salesFunnelName;
+    }
+
+    public String getUrlSlug() {
+        return urlSlug;
+    }
+
+    public void setUrlSlug(String urlSlug) {
+        this.urlSlug = urlSlug;
+    }
+
+    public Boolean getIsActive() {
+        return isActive;
+    }
+
+    public void setIsActive(Boolean isActive) {
+        this.isActive = isActive;
+    }
+
+    public Boolean getIsDayRequired() {
+        return isDayRequired;
+    }
+
+    public void setIsDayRequired(Boolean isDayRequired) {
+        this.isDayRequired = isDayRequired;
+    }
+
+    public java.time.LocalTime getSalesCutoffLocalTime() {
+        return salesCutoffLocalTime;
+    }
+
+    public void setSalesCutoffLocalTime(java.time.LocalTime salesCutoffLocalTime) {
+        this.salesCutoffLocalTime = salesCutoffLocalTime;
+    }
+
+    public java.time.LocalTime getSalesCutoffUtc() {
+        return salesCutoffUtc;
+    }
+
+    public void setSalesCutoffUtc(java.time.LocalTime salesCutoffUtc) {
+        this.salesCutoffUtc = salesCutoffUtc;
+    }
+
+    public Boolean getIsWebEnabled() {
+        return isWebEnabled;
+    }
+
+    public void setIsWebEnabled(Boolean isWebEnabled) {
+        this.isWebEnabled = isWebEnabled;
+    }
+
+    public Boolean getIsPosEnabled() {
+        return isPosEnabled;
+    }
+
+    public void setIsPosEnabled(Boolean isPosEnabled) {
+        this.isPosEnabled = isPosEnabled;
+    }
+
+    public java.util.List<Long> getAmenityIds() {
+        return amenityIds;
+    }
+
+    public void setAmenityIds(java.util.List<Long> amenityIds) {
+        this.amenityIds = amenityIds;
+    }
 
 
-curl.exe -i "https://sndpromo.hlticketing.com/api/promotions?sessionKey=68bdf068-646d-4d1b-835d-c8439ca7b9aa" -H "Authorization: Bearer YOUR_TOKEN"
+
+
+package com.hlt.api.controller;
+
+import com.hlt.api.dtos.request.TicketRequest;
+import com.hlt.api.dtos.response.ApiResponse;
+import com.hlt.api.dtos.response.FunnelAmenityOption;
+import com.hlt.api.model.SalesFunnel;
+import com.hlt.api.service.ISalesFunnelService;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.web.bind.annotation.*;
+
+import java.util.List;
+
+@RestController
+@RequestMapping("/api/v1/funnels")
+@Tag(name = "7. Sales Funnel Management", description = "Sales Funnels and Funnel Amenities")
+public class SalesFunnelController {
+
+    @Autowired
+    private ISalesFunnelService salesFunnelService;
+
+    @Operation(summary = "Get Funnel Amenities")
+    @GetMapping("/amenities")
+    public ApiResponse<List<FunnelAmenityOption>> getFunnelAmenities(@RequestParam Integer locationId,
+                                                                       @AuthenticationPrincipal Jwt jwt) {
+        TicketRequest req = new TicketRequest();
+        req.setLocationId(locationId);
+        if (jwt != null) {
+            req.setSessionKey(jwt.getClaims().get("origin_jti").toString());
+        }
+        List<FunnelAmenityOption> amenities = salesFunnelService.getFunnelAmenities(req);
+        return ApiResponse.success("Funnel Amenities Retrieved", amenities);
+    }
+
+    @Operation(summary = "Create Sales Funnel")
+    @PostMapping
+    public ApiResponse<SalesFunnel> createSalesFunnel(@RequestBody TicketRequest req,
+                                                        @AuthenticationPrincipal Jwt jwt) {
+        if (jwt != null) {
+            req.setSessionKey(jwt.getClaims().get("origin_jti").toString());
+        }
+        SalesFunnel result = salesFunnelService.createSalesFunnel(req);
+        return ApiResponse.success("Sales Funnel Created", result);
+    }
+
+    @Operation(summary = "Update Sales Funnel")
+    @PutMapping("/{id}")
+    public ApiResponse<SalesFunnel> updateSalesFunnel(@PathVariable Integer id,
+                                                        @RequestBody TicketRequest req,
+                                                        @AuthenticationPrincipal Jwt jwt) {
+        req.setSalesFunnelId(id);
+        if (jwt != null) {
+            req.setSessionKey(jwt.getClaims().get("origin_jti").toString());
+        }
+        SalesFunnel result = salesFunnelService.updateSalesFunnel(req);
+        return ApiResponse.success("Sales Funnel Updated", result);
+    }
+
+    @Operation(summary = "Delete Sales Funnel")
+    @DeleteMapping("/{id}")
+    public ApiResponse<String> deleteSalesFunnel(@PathVariable Integer id,
+                                                  @AuthenticationPrincipal Jwt jwt) {
+        TicketRequest req = new TicketRequest();
+        req.setSalesFunnelId(id);
+        if (jwt != null) {
+            req.setSessionKey(jwt.getClaims().get("origin_jti").toString());
+        }
+        salesFunnelService.deleteSalesFunnel(req);
+        return ApiResponse.success("Sales Funnel Deleted", null);
+    }
+}
+
+
+package com.hlt.api.service;
+
+import com.hlt.api.dtos.request.TicketRequest;
+import com.hlt.api.dtos.response.FunnelAmenityOption;
+import com.hlt.api.model.SalesFunnel;
+
+import java.util.List;
+
+public interface ISalesFunnelService {
+
+    List<FunnelAmenityOption> getFunnelAmenities(TicketRequest req);
+
+    SalesFunnel createSalesFunnel(TicketRequest req);
+
+    SalesFunnel updateSalesFunnel(TicketRequest req);
+
+    void deleteSalesFunnel(TicketRequest req);
+}
+
+
+
+package com.hlt.api.service.impl;
+
+import com.hlt.api.dao.SalesFunnelDao;
+import com.hlt.api.dtos.request.TicketRequest;
+import com.hlt.api.dtos.response.FunnelAmenityOption;
+import com.hlt.api.model.SalesFunnel;
+import com.hlt.api.service.ISalesFunnelService;
+import com.hlt.api.util.TimezoneConverter;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
+import java.time.ZoneId;
+import java.util.List;
+
+@Slf4j
+@Service
+public class SalesFunnelServiceImpl implements ISalesFunnelService {
+
+    @Autowired
+    private SalesFunnelDao salesFunnelDao;
+
+    @Override
+    public List<FunnelAmenityOption> getFunnelAmenities(TicketRequest req) {
+        log.info("Fetching funnel amenities for locationId: {}", req.getLocationId());
+        return salesFunnelDao.getFunnelAmenities(req);
+    }
+
+    @Override
+    @Transactional
+    public SalesFunnel createSalesFunnel(TicketRequest req) {
+        log.info("Creating Sales Funnel: {}", req.getSalesFunnelName());
+
+        normalizeCutoffToUtc(req);
+
+        Integer newId = salesFunnelDao.createSalesFunnel(req);
+        req.setSalesFunnelId(newId);
+
+        insertAmenities(req);
+
+        return toEntity(req);
+    }
+
+    @Override
+    @Transactional
+    public SalesFunnel updateSalesFunnel(TicketRequest req) {
+        log.info("Updating Sales Funnel: {}", req.getSalesFunnelId());
+
+        normalizeCutoffToUtc(req);
+
+        salesFunnelDao.updateSalesFunnel(req);
+
+        // Clear + re-insert keeps funnelOrder in sync with the incoming amenityIds list.
+        salesFunnelDao.clearSalesFunnelAmenities(req);
+        insertAmenities(req);
+
+        return toEntity(req);
+    }
+
+    @Override
+    @Transactional
+    public void deleteSalesFunnel(TicketRequest req) {
+        log.info("Soft-deleting Sales Funnel: {}", req.getSalesFunnelId());
+        salesFunnelDao.deleteSalesFunnel(req);
+    }
+
+    private void insertAmenities(TicketRequest req) {
+        List<Long> amenityIds = req.getAmenityIds();
+        if (amenityIds == null || amenityIds.isEmpty()) {
+            return;
+        }
+        for (int i = 0; i < amenityIds.size(); i++) {
+            // List index becomes funnelOrder, per spec.
+            salesFunnelDao.addSalesFunnelAmenity(req, amenityIds.get(i), i);
+        }
+    }
+
+    /**
+     * Converts salesCutoffLocalTime into salesCutoffUtc using the timezone of the
+     * funnel's own location (looked up from Physical_Address via
+     * SalesFunnelDao.getTimezoneByLocation, same as SystemDiscountDao does),
+     * rather than trusting the client to send an offset. Skipped if the client
+     * already sent salesCutoffUtc directly.
+     *
+     * Note: because a recurring daily cutoff can straddle a DST transition later
+     * in the year, this resolves the offset against "today" at write time. If
+     * the business wants a cutoff whose local wall-clock time never drifts
+     * across DST boundaries, this is the right approach; if it should instead
+     * pin to a fixed UTC offset forever, that needs a different rule - flag this
+     * with the team if it matters for sales_cutoff semantics.
+     */
+    private void normalizeCutoffToUtc(TicketRequest req) {
+        if (req.getSalesCutoffUtc() != null) {
+            return;
+        }
+        if (req.getSalesCutoffLocalTime() == null) {
+            return;
+        }
+
+        String timezone = salesFunnelDao.getTimezoneByLocation(req);
+        TimezoneConverter.validateTimezone(timezone);
+
+        LocalDateTime localDateTime = LocalDate.now(ZoneId.of(timezone)).atTime(req.getSalesCutoffLocalTime());
+        OffsetDateTime utc = TimezoneConverter.toUtc(localDateTime, timezone);
+        req.setSalesCutoffUtc(utc.toLocalTime());
+    }
+
+    private SalesFunnel toEntity(TicketRequest req) {
+        SalesFunnel funnel = new SalesFunnel();
+        funnel.setId(req.getSalesFunnelId());
+        funnel.setLocationId(req.getLocationId());
+        funnel.setName(req.getSalesFunnelName());
+        funnel.setUrlSlug(req.getUrlSlug());
+        funnel.setIsActive(req.getIsActive());
+        funnel.setIsDayRequired(req.getIsDayRequired());
+        funnel.setSalesCutoffUtc(req.getSalesCutoffUtc());
+        funnel.setIsWebEnabled(req.getIsWebEnabled());
+        funnel.setIsPosEnabled(req.getIsPosEnabled());
+        funnel.setIsRemoved(false);
+        funnel.setCreatedBy(req.getSessionKey());
+        return funnel;
+    }
+}
+
+
+
+
+package com.hlt.api.dao;
+
+import com.hlt.api.dtos.request.TicketRequest;
+import com.hlt.api.dtos.response.FunnelAmenityOption;
+import org.springframework.stereotype.Repository;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+/**
+ * DAO for the Sales Funnel module. Follows the same BaseDao / SimpleJdbcCall
+ * pattern used by PhysicalAddressDao, and takes TicketRequest like the rest
+ * of the codebase rather than narrow per-endpoint DTOs.
+ */
+@Repository
+public class SalesFunnelDao extends BaseDao {
+
+    /**
+     * Inserts the parent sales_funnels row.
+     * usp_Create_Sales_Funnel returns p_Result_Code (validated by BaseDao)
+     * plus p_Sales_Funnel_Id, the new identity value.
+     */
+    public Integer createSalesFunnel(TicketRequest req) {
+        Map<String, Object> params = new HashMap<>();
+        params.put("p_Session_Key", req.getSessionKey());
+        params.put("p_Location_Id", req.getLocationId());
+        params.put("p_Name", req.getSalesFunnelName());
+        params.put("p_Url_Slug", req.getUrlSlug());
+        params.put("p_Is_Active", req.getIsActive());
+        params.put("p_Is_Day_Required", req.getIsDayRequired());
+        params.put("p_Sales_Cutoff_Utc", req.getSalesCutoffUtc());
+        params.put("p_Is_Web_Enabled", req.getIsWebEnabled());
+        params.put("p_Is_Pos_Enabled", req.getIsPosEnabled());
+
+        return executeReturnId("usp_Create_Sales_Funnel", "p_Sales_Funnel_Id", params);
+    }
+
+    /**
+     * Updates the parent sales_funnels row. Separate proc from create per
+     * the latest DB team decision (no more upsert_sales_funnel).
+     */
+    public void updateSalesFunnel(TicketRequest req) {
+        Map<String, Object> params = new HashMap<>();
+        params.put("p_Session_Key", req.getSessionKey());
+        params.put("p_Sales_Funnel_Id", req.getSalesFunnelId());
+        params.put("p_Location_Id", req.getLocationId());
+        params.put("p_Name", req.getSalesFunnelName());
+        params.put("p_Url_Slug", req.getUrlSlug());
+        params.put("p_Is_Active", req.getIsActive());
+        params.put("p_Is_Day_Required", req.getIsDayRequired());
+        params.put("p_Sales_Cutoff_Utc", req.getSalesCutoffUtc());
+        params.put("p_Is_Web_Enabled", req.getIsWebEnabled());
+        params.put("p_Is_Pos_Enabled", req.getIsPosEnabled());
+
+        executeVoid("usp_Update_Sales_Funnel", params);
+    }
+
+    /** Soft delete: usp_Delete_Sales_Funnel sets is_removed = 1 server-side. */
+    public void deleteSalesFunnel(TicketRequest req) {
+        Map<String, Object> params = new HashMap<>();
+        params.put("p_Session_Key", req.getSessionKey());
+        params.put("p_Sales_Funnel_Id", req.getSalesFunnelId());
+
+        executeVoid("usp_Delete_Sales_Funnel", params);
+    }
+
+    /** Removes all sales_funnel_amenities rows for a funnel before re-inserting on update. */
+    public void clearSalesFunnelAmenities(TicketRequest req) {
+        Map<String, Object> params = new HashMap<>();
+        params.put("p_Session_Key", req.getSessionKey());
+        params.put("p_Sales_Funnel_Id", req.getSalesFunnelId());
+
+        executeVoid("usp_Clear_Sales_Funnel_Amenities", params);
+    }
+
+    /** Inserts a single sales_funnel_amenities row, preserving display order. */
+    public void addSalesFunnelAmenity(TicketRequest req, Long amenityId, Integer funnelOrder) {
+        Map<String, Object> params = new HashMap<>();
+        params.put("p_Session_Key", req.getSessionKey());
+        params.put("p_Sales_Funnel_Id", req.getSalesFunnelId());
+        params.put("p_Amenity_Id", amenityId);
+        params.put("p_Funnel_Order", funnelOrder);
+
+        executeVoid("usp_Add_Sales_Funnel_Amenity", params);
+    }
+
+    /**
+     * Retrieves selectable amenities for a location by walking its ancestor/descendant
+     * hierarchy. Per the spec, until the recursive-CTE proc (usp_Get_Funnel_Amenities)
+     * ships, this proxies the standard usp_Get_Amenities as a temporary mock -
+     * swap the procName below once the real proc is available.
+     */
+    public List<FunnelAmenityOption> getFunnelAmenities(TicketRequest req) {
+        Map<String, Object> params = new HashMap<>();
+        params.put("p_Session_Key", req.getSessionKey());
+        params.put("p_Location_Id", req.getLocationId());
+
+        // TODO: swap to "usp_Get_Funnel_Amenities" once the recursive CTE proc lands.
+        List<Map<String, Object>> rows = executeList("usp_Get_Amenities", params);
+        return mapToFunnelAmenityOptions(rows);
+    }
+
+    /**
+     * Looks up the IANA timezone for a location via its physical address,
+     * same pattern as SystemDiscountDao.getTimezoneByLocation.
+     */
+    public String getTimezoneByLocation(TicketRequest req) {
+        Map<String, Object> params = new HashMap<>();
+        params.put("p_Session_Key", req.getSessionKey());
+        params.put("p_Location_Id", req.getLocationId());
+
+        return executeReturnType("usp_Get_Timezone_By_Location", "p_Timezone", params);
+    }
+
+    private List<FunnelAmenityOption> mapToFunnelAmenityOptions(List<Map<String, Object>> rows) {
+        List<FunnelAmenityOption> options = new ArrayList<>();
+        for (Map<String, Object> row : rows) {
+            FunnelAmenityOption option = new FunnelAmenityOption();
+            option.setLocationId((Integer) row.get("locationId"));
+            option.setLocationName((String) row.get("locationName"));
+            option.setAmenityId((Integer) row.get("amenityId"));
+            option.setAmenityName((String) row.get("amenityName"));
+            options.add(option);
+        }
+        return options;
+    }
+}
+
+
+
+package com.hlt.api.util;
+
+import jakarta.validation.ValidationException;
+
+import java.time.*;
+
+/**
+ * Ported from hlt.promo.engine.util.TimezoneConverter to keep the same
+ * local<->UTC conversion behavior across services.
+ */
+public final class TimezoneConverter {
+
+    private TimezoneConverter() {
+    }
+
+    /**
+     * Convert local date time to UTC.
+     *
+     * Example:
+     *   input:  localDateTime = "2026-08-20T09:00:00" (9 AM)
+     *   input:  timezone = "America/New_York"
+     *   output: "2026-08-20T13:00:00Z" (1 PM UTC)
+     *
+     * DST is handled automatically by ZoneId.
+     */
+    public static OffsetDateTime toUtc(LocalDateTime localDateTime, String timezone) {
+        validateTimezone(timezone);
+        return localDateTime
+                .atZone(ZoneId.of(timezone))            // attach timezone
+                .withZoneSameInstant(ZoneOffset.UTC)     // convert to UTC
+                .toOffsetDateTime();                     // return as OffsetDateTime
+    }
+
+    /**
+     * Convert UTC back to local date time.
+     *
+     * Example:
+     *   input:  utcDateTime = "2026-08-20T13:00:00" (1 PM UTC)
+     *   input:  timezone = "America/New_York"
+     *   output: "2026-08-20T09:00:00" (9 AM New York)
+     */
+    public static LocalDateTime toLocal(LocalDateTime utcDateTime, String timezone) {
+        validateTimezone(timezone);
+        return utcDateTime
+                .atZone(ZoneOffset.UTC)                  // mark as UTC
+                .withZoneSameInstant(ZoneId.of(timezone)) // convert to local
+                .toLocalDateTime();                       // return as LocalDateTime
+    }
+
+    /**
+     * Check if timezone string is valid IANA timezone.
+     */
+    public static void validateTimezone(String timezone) {
+        if (timezone == null || timezone.isBlank()) {
+            throw new ValidationException("Timezone cannot be null or blank");
+        }
+        try {
+            ZoneId.of(timezone);
+        } catch (DateTimeException e) {
+            throw new ValidationException("Invalid timezone: " + timezone);
+        }
+    }
+
+    /**
+     * Check if a date falls in a DST gap.
+     * Example: 2:30 AM on March 8 doesn't exist in America/New_York
+     *          (clocks jump from 2:00 AM to 3:00 AM)
+     */
+    public static boolean isInDstGap(LocalDateTime dateTime, String timezone) {
+        ZonedDateTime zoned = dateTime.atZone(ZoneId.of(timezone));
+        return !zoned.toLocalDateTime().equals(dateTime);
+    }
+}
+
+
+
+
+package com.hlt.api.model;
+
+import java.time.LocalTime;
+
+/**
+ * Entity representing a row in the sales_funnels table.
+ */
+public class SalesFunnel {
+
+    private Integer id;
+    private Integer locationId;
+    private String name;
+    private String urlSlug;
+    private Boolean isActive;
+    private Boolean isDayRequired;
+    private LocalTime salesCutoffUtc;
+    private Boolean isWebEnabled;
+    private Boolean isPosEnabled;
+    private Boolean isRemoved;
+    private String createdBy;
+
+    public Integer getId() {
+        return id;
+    }
+
+    public void setId(Integer id) {
+        this.id = id;
+    }
+
+    public Integer getLocationId() {
+        return locationId;
+    }
+
+    public void setLocationId(Integer locationId) {
+        this.locationId = locationId;
+    }
+
+    public String getName() {
+        return name;
+    }
+
+    public void setName(String name) {
+        this.name = name;
+    }
+
+    public String getUrlSlug() {
+        return urlSlug;
+    }
+
+    public void setUrlSlug(String urlSlug) {
+        this.urlSlug = urlSlug;
+    }
+
+    public Boolean getIsActive() {
+        return isActive;
+    }
+
+    public void setIsActive(Boolean isActive) {
+        this.isActive = isActive;
+    }
+
+    public Boolean getIsDayRequired() {
+        return isDayRequired;
+    }
+
+    public void setIsDayRequired(Boolean isDayRequired) {
+        this.isDayRequired = isDayRequired;
+    }
+
+    public LocalTime getSalesCutoffUtc() {
+        return salesCutoffUtc;
+    }
+
+    public void setSalesCutoffUtc(LocalTime salesCutoffUtc) {
+        this.salesCutoffUtc = salesCutoffUtc;
+    }
+
+    public Boolean getIsWebEnabled() {
+        return isWebEnabled;
+    }
+
+    public void setIsWebEnabled(Boolean isWebEnabled) {
+        this.isWebEnabled = isWebEnabled;
+    }
+
+    public Boolean getIsPosEnabled() {
+        return isPosEnabled;
+    }
+
+    public void setIsPosEnabled(Boolean isPosEnabled) {
+        this.isPosEnabled = isPosEnabled;
+    }
+
+    public Boolean getIsRemoved() {
+        return isRemoved;
+    }
+
+    public void setIsRemoved(Boolean isRemoved) {
+        this.isRemoved = isRemoved;
+    }
+
+    public String getCreatedBy() {
+        return createdBy;
+    }
+
+    public void setCreatedBy(String createdBy) {
+        this.createdBy = createdBy;
+    }
+}
+
+
+
+package com.hlt.api.model;
+
+/**
+ * Junction entity mapping an amenity to a sales funnel, preserving display order.
+ */
+public class SalesFunnelAmenity {
+
+    private Integer salesFunnelId;
+    private Integer amenityId;
+    private Integer funnelOrder;
+
+    public SalesFunnelAmenity() {
+    }
+
+    public SalesFunnelAmenity(Integer salesFunnelId, Integer amenityId, Integer funnelOrder) {
+        this.salesFunnelId = salesFunnelId;
+        this.amenityId = amenityId;
+        this.funnelOrder = funnelOrder;
+    }
+
+    public Integer getSalesFunnelId() {
+        return salesFunnelId;
+    }
+
+    public void setSalesFunnelId(Integer salesFunnelId) {
+        this.salesFunnelId = salesFunnelId;
+    }
+
+    public Integer getAmenityId() {
+        return amenityId;
+    }
+
+    public void setAmenityId(Integer amenityId) {
+        this.amenityId = amenityId;
+    }
+
+    public Integer getFunnelOrder() {
+        return funnelOrder;
+    }
+
+    public void setFunnelOrder(Integer funnelOrder) {
+        this.funnelOrder = funnelOrder;
+    }
+}
+
+
+
+package com.hlt.api.dtos.response;
+
+/**
+ * Response DTO for GET /api/v1/funnels/amenities.
+ * Represents a single selectable amenity option, grouped by its owning location,
+ * for populating the "Assigned Items" dropdown seen in the Add/Edit Funnel UI.
+ */
+public class FunnelAmenityOption {
+
+    private Integer locationId;
+    private String locationName;
+    private Integer amenityId;
+    private String amenityName;
+
+    public FunnelAmenityOption() {
+    }
+
+    public Integer getLocationId() {
+        return locationId;
+    }
+
+    public void setLocationId(Integer locationId) {
+        this.locationId = locationId;
+    }
+
+    public String getLocationName() {
+        return locationName;
+    }
+
+    public void setLocationName(String locationName) {
+        this.locationName = locationName;
+    }
+
+    public Integer getAmenityId() {
+        return amenityId;
+    }
+
+    public void setAmenityId(Integer amenityId) {
+        this.amenityId = amenityId;
+    }
+
+    public String getAmenityName() {
+        return amenityName;
+    }
+
+    public void setAmenityName(String amenityName) {
+        this.amenityName = amenityName;
+    }
+}
+
