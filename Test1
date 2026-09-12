@@ -1216,3 +1216,128 @@ private String buildAssignedAmenitiesCsv(TicketRequest req) {
                 .collect(Collectors.joining(","));
     }
 
+
+
+==============================================
+export const salesFunnelTypeDefs = `
+  input CreateSalesFunnel {
+    locationId: Int!
+    salesFunnelName: String!
+    urlSlug: String
+    isActive: Boolean!
+    isDayRequired: Boolean!
+    salesCutoffLocalTime: String
+    salesCutoffUtc: String
+    isWebEnabled: Boolean!
+    isPosEnabled: Boolean!
+    amenityIds: [Int!]
+  }
+
+  input UpdateSalesFunnel {
+    salesFunnelId: Int!
+    locationId: Int!
+    salesFunnelName: String!
+    urlSlug: String
+    isActive: Boolean!
+    isDayRequired: Boolean!
+    salesCutoffLocalTime: String
+    salesCutoffUtc: String
+    isWebEnabled: Boolean!
+    isPosEnabled: Boolean!
+    amenityIds: [Int!]
+  }
+
+  input DeleteSalesFunnel {
+    salesFunnelId: Int!
+  }
+
+  input GetFunnelAmenities {
+    locationId: Int!
+  }
+
+  type Mutation {
+    createSalesFunnel(request: CreateSalesFunnel): SessionResponse
+    updateSalesFunnel(request: UpdateSalesFunnel): SessionResponse
+    deleteSalesFunnel(request: DeleteSalesFunnel): SessionResponse
+  }
+
+  type Query {
+    getFunnelAmenities(request: GetFunnelAmenities): SessionResponse
+  }
+`;
+
+
+
+import {
+  createSalesFunnel,
+  updateSalesFunnel,
+  deleteSalesFunnel,
+  getFunnelAmenities,
+} from "../../service/salesfunnel/salesFunnelService";
+
+export const salesFunnelResolvers = {
+  Mutation: {
+    createSalesFunnel: async (_: any, { request }: any, ctx: any) => {
+      ctx.logger.info("Create Sales Funnel", { request });
+      return await createSalesFunnel(request, ctx);
+    },
+    updateSalesFunnel: async (_: any, { request }: any, ctx: any) => {
+      ctx.logger.info("Update Sales Funnel", { request });
+      return await updateSalesFunnel(request, ctx);
+    },
+    deleteSalesFunnel: async (_: any, { request }: any, ctx: any) => {
+      ctx.logger.info("Delete Sales Funnel", { request });
+      return await deleteSalesFunnel(request, ctx);
+    },
+  },
+  Query: {
+    getFunnelAmenities: async (_: any, { request }: any, ctx: any) => {
+      ctx.logger.info("Get Funnel Amenities", { request });
+      return await getFunnelAmenities(request, ctx);
+    },
+  },
+};
+
+
+import { httpClient } from "../../utils/http/httpClient";
+
+async function callFunnelData(method: string, endpoint: string, request: any, context: any) {
+  const baseUrl = process.env.SPRINGBOOT_BASE_ENDPOINT;
+  const url = `${baseUrl}/api/v1/funnels${endpoint}`;
+  return await httpClient(
+    url,
+    {
+      method: method,
+      body: request,
+    },
+    context.logger,
+    context
+  );
+}
+
+// NOTE: every call below is POST, on purpose - the Spring Boot
+// SalesFunnelController only exposes POST endpoints (/create, /update,
+// /delete, /amenities), all taking a TicketRequest-shaped body. This mirrors
+// physicalAddressService.ts's getPhysicalAddress, which is POST for the same
+// reason, but applied consistently across all four sales funnel operations
+// instead of just the read.
+
+export async function createSalesFunnel(request: any, context: any) {
+  return await callFunnelData("POST", "/create", request, context);
+}
+
+export async function updateSalesFunnel(request: any, context: any) {
+  return await callFunnelData("POST", "/update", request, context);
+}
+
+export async function deleteSalesFunnel(request: any, context: any) {
+  return await callFunnelData("POST", "/delete", request, context);
+}
+
+export async function getFunnelAmenities(request: any, context: any) {
+  return await callFunnelData("POST", "/amenities", request, context);
+}
+
+
+
+
