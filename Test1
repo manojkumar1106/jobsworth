@@ -1201,3 +1201,18 @@ public final class TimezoneConverter {
         return new ArrayList<>(groupsByLocationId.values());
     }
 
+
+
+
+===================================
+
+private String buildAssignedAmenitiesCsv(TicketRequest req) {
+        List<Integer> amenityIds = req.getAmenityIds();
+        if (amenityIds == null || amenityIds.isEmpty()) {
+            return null;
+        }
+        return amenityIds.stream()
+                .map(String::valueOf)
+                .collect(Collectors.joining(","));
+    }
+
