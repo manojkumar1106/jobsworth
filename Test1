@@ -1395,3 +1395,21 @@ export async function getSalesFunnel(request: any, context: any) {
 
 
 
+private void addLocalCutoffTime(TicketRequest req, Map<String, Object> funnel) {
+        Object utcValue = funnel.get("todayCutoffTimeUtc");
+        if (utcValue == null) {
+            return;
+        }
+
+        String timezone = salesFunnelDao.getTimezoneByLocation(req);
+        TimezoneConverter.validateTimezone(timezone);
+
+        LocalTime utcTime = LocalTime.parse(utcValue.toString());
+        LocalDateTime utcDateTime = LocalDate.now(ZoneId.of("UTC")).atTime(utcTime);
+        LocalDateTime localDateTime = TimezoneConverter.toLocal(utcDateTime, timezone);
+
+        funnel.put("salesCutoffLocalTime", localDateTime.toLocalTime().toString());
+    }
+
+
+
