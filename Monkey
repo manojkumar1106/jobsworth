@@ -81,3 +81,24 @@ input GetSalesFunnelDetails {
   salesFunnelId: Int!
 }
 
+
+
+protected List<List<Map<String, Object>>> executeMultiResultSets(
+        String procName, Map<String, Object> params, int resultSetCount) {
+    String schemaName = jdbcTemplate.execute((Connection conn) -> conn.getCatalog());
+    SimpleJdbcCall call = new SimpleJdbcCall(jdbcTemplate)
+            .withCatalogName(schemaName)
+            .withProcedureName(procName);
+
+    Map<String, Object> out = call.execute(params);
+    validateResultCode(out, procName);
+
+    List<List<Map<String, Object>>> resultSets = new ArrayList<>();
+    for (int i = 1; i <= resultSetCount; i++) {
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> rawRows = (List<Map<String, Object>>) out.get("#result-set-" + i);
+        resultSets.add(convertResponse(rawRows));
+    }
+    return resultSets;
+}
+
