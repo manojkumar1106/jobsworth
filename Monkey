@@ -1,0 +1,83 @@
+public Map<String, Object> getSalesFunnelDetails(TicketRequest req) {
+    Map<String, Object> params = new HashMap<>();
+    params.put("p_Session_Key", req.getSessionKey());
+    params.put("p_Sales_Funnel_Id", req.getSalesFunnelId());
+
+    List<List<Map<String, Object>>> resultSets =
+            executeMultiResultSets("usp_Get_Sales_Funnel_Details", params, 2);
+
+    List<Map<String, Object>> funnelRows = resultSets.get(0);
+    List<Map<String, Object>> amenityRows = resultSets.get(1);
+
+    if (funnelRows == null || funnelRows.isEmpty()) {
+        return null;
+    }
+
+    Map<String, Object> funnel = new LinkedHashMap<>(funnelRows.get(0));
+    funnel.put("assignedAmenities", amenityRows == null ? List.of() : amenityRows);
+    return funnel;
+}
+
+
+List<Map<String, Object>> getSalesFunnelDetails(TicketRequest req);
+
+
+
+@Override
+public List<Map<String, Object>> getSalesFunnelDetails(TicketRequest req) {
+    log.info("Fetching Sales Funnel Details: {}", req.getSalesFunnelId());
+    Map<String, Object> funnel = salesFunnelDao.getSalesFunnelDetails(req);
+    if (funnel == null) {
+        throw new IllegalArgumentException("Sales funnel not found for salesFunnelId=" + req.getSalesFunnelId());
+    }
+    addLocalCutoffTime(req, funnel);
+    funnel.remove("todayCutoffTimeUtc");
+    return List.of(funnel);
+}
+
+private void addLocalCutoffTime(TicketRequest req, Map<String, Object> funnel) {
+    Object utcValue = funnel.get("todayCutoffTimeUtc");
+    if (utcValue == null) {
+        return;
+    }
+
+    String timezone = salesFunnelDao.getTimezoneByLocation(req);
+    TimezoneConverter.validateTimezone(timezone);
+
+    LocalTime utcTime = LocalTime.parse(utcValue.toString());
+    LocalDateTime utcDateTime = LocalDate.now(ZoneId.of("UTC")).atTime(utcTime);
+    LocalDateTime localDateTime = TimezoneConverter.toLocal(utcDateTime, timezone);
+
+    funnel.put("salesCutoffLocalTime", localDateTime.toLocalTime().toString());
+}
+
+
+@Operation(summary = "Get Sales Funnel Details")
+@PostMapping("/details")
+public ApiResponse<List<Map<String, Object>>> getSalesFunnelDetails(@RequestBody TicketRequest req,
+                                                                      @AuthenticationPrincipal Jwt jwt) {
+    if (jwt != null) {
+        req.setSessionKey(jwt.getClaims().get("origin_jti").toString());
+    }
+    List<Map<String, Object>> funnel = salesFunnelService.getSalesFunnelDetails(req);
+    return ApiResponse.success("Sales Funnel Details Retrieved", funnel);
+}
+
+
+export async function getSalesFunnelDetails(request: any, context: any) {
+  return await callFunnelData("POST", "/details", request, context);
+}
+
+
+
+getSalesFunnelDetails: async (_: any, { request }: any, ctx: any) => {
+  ctx.logger.info("Get Sales Funnel Details", { request });
+  return await getSalesFunnelDetails(request, ctx);
+},
+
+
+
+input GetSalesFunnelDetails {
+  salesFunnelId: Int!
+}
+
