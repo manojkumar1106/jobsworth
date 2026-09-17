@@ -1,4 +1,16 @@
-if (promotionDao.existsByPromoCode(request.getPromoCode(), request.getLocationId())) {
+@Transactional
+public void createPromotion(CreatePromotionRequest request) {
+
+    if (!request.getStartDate().isBefore(request.getEndDate())) {
+        throw new ValidationException("Start date must be before end date");
+    }
+
+    Map<String, Object> existing = promotionDao.getPromotionByCode(
+        request.getSessionKey(), request.getPromoCode());
+    if (existing != null && !existing.isEmpty()) {
         throw new DuplicatePromoCodeException(
             "Promo code '" + request.getPromoCode() + "' already exists");
     }
+
+    // ... rest unchanged
+}
