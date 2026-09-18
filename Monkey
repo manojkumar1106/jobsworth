@@ -7,3 +7,36 @@ try {
 
 let responseMessage = backendMessage || "An Unexpected error occured";
 
+
+If Amenity = [dropdown] AND Price Type = [dropdown] AND Price Tier = [dropdown] AND Date is between [date] and [date] Then apply discount of $[amount]
+
+
+
+
+
+Price Type (lookup)
+
+ID	Name
+1	Adult
+2	Child
+
+Price Tier (lookup)
+
+ID	Name
+1	Early
+2	Standard
+3	Late
+
+Amenity (lookup)
+
+ID	Name
+1	General Admission
+2	Timed (tour?)
+
+Amenity + Price Type + Tier Mapping — this is the actual base price matrix, replacing the "base price + tier column" table from the Figma wireframe:
+
+AID	PTID	PTierID	Price
+1	1	1	$30
+1	2	1	$20
+
+So price is looked up by the combinatio
