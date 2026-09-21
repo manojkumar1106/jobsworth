@@ -221,3 +221,11 @@ public String deletePriceType(TicketRequest req) {
         String name = priceTypeService.deletePriceType(req);
         return ApiResponse.success("Price Type " + name + " Deleted", null);
     }
+
+
+
+ @Override
+    public List<Map<String, Object>> getLocationPriceType(TicketRequest req) {
+        log.info("Fetching Price Types for locationFunctionId: {}", req.getLocationFunctionId());
+        return priceTypeDao.getLocationPriceType(req);
+    }
