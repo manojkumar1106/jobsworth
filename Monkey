@@ -17,3 +17,16 @@ public List<Map<String, Object>> getSalesFunnel(TicketRequest req) {
     }
     return result;
 }
+
+
+
+private void normalizeCutoffToUtc(TicketRequest req) {
+    if (req.getSalesCutoffUtc() != null || req.getSalesCutoffLocalTime() == null) {
+        return;
+    }
+    String timezone = salesFunnelDao.getTimezoneByLocation(req);
+    TimezoneConverter.validateTimezone(timezone);
+
+    OffsetDateTime utc = TimezoneConverter.toUtc(req.getSalesCutoffLocalTime(), timezone);
+    req.setSalesCutoffUtc(utc.toLocalTime());
+}
