@@ -1,231 +1,100 @@
-package com.hlt.api.controller;
+export const priceTypeTypeDefs = `
+  input CreatePriceType {
+    locationFunctionId: Int!
+    priceTypeName: String!
+    priceTypeDescription: String
+    basePrice: Float!
+  }
 
-import com.hlt.api.dtos.request.TicketRequest;
-import com.hlt.api.service.IPriceTypeService;
-// TODO: adjust this import to wherever ApiResponse lives in your project
-import com.hlt.api.dtos.response.ApiResponse;
-import io.swagger.v3.oas.annotations.Operation;
-import io.swagger.v3.oas.annotations.tags.Tag;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.security.core.annotation.AuthenticationPrincipal;
-import org.springframework.security.oauth2.jwt.Jwt;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
+  input UpdatePriceType {
+    locationFunctionId: Int!
+    priceTypeId: Int!
+    priceTypeName: String!
+    priceTypeDescription: String
+    basePrice: Float!
+  }
 
-import java.util.List;
-import java.util.Map;
+  input DeletePriceType {
+    priceTypeId: Int!
+  }
 
-@RestController
-@RequestMapping("/api/v1/price-types")
-@Tag(name = "8. Price Type Management", description = "Location Price Types")
-public class PriceTypeController {
+  input GetLocationPriceType {
+    locationFunctionId: Int!
+  }
 
-    @Autowired
-    private IPriceTypeService priceTypeService;
+  type Mutation {
+    createPriceType(request: CreatePriceType): SessionResponse
+    updatePriceType(request: UpdatePriceType): SessionResponse
+    deletePriceType(request: DeletePriceType): SessionResponse
+  }
 
-    @Operation(summary = "Get Location Price Types")
-    @PostMapping("/get")
-    public ApiResponse<List<Map<String, Object>>> getLocationPriceType(
-            @RequestBody TicketRequest req, @AuthenticationPrincipal Jwt jwt) {
-        if (jwt != null) {
-            req.setSessionKey(jwt.getClaims().get("origin_jti").toString());
-        }
-        List<Map<String, Object>> priceTypes = priceTypeService.getLocationPriceType(req);
-        return ApiResponse.success("Price Types Retrieved", priceTypes);
-    }
+  type Query {
+    getLocationPriceType(request: GetLocationPriceType): SessionResponse
+  }
+`;
 
-    @Operation(summary = "Create Price Type")
-    @PostMapping("/create")
-    public ApiResponse<Map<String, Integer>> createPriceType(
-            @RequestBody TicketRequest req, @AuthenticationPrincipal Jwt jwt) {
-        if (jwt != null) {
-            req.setSessionKey(jwt.getClaims().get("origin_jti").toString());
-        }
-        Integer newId = priceTypeService.createPriceType(req);
-        Map<String, Integer> data = Map.of("priceTypeId", newId);
-        return ApiResponse.success("Price Type " + req.getPriceTypeName() + " Created", data);
-    }
 
-    @Operation(summary = "Update Price Type")
-    @PostMapping("/update")
-    public ApiResponse<Map<String, Integer>> updatePriceType(
-            @RequestBody TicketRequest req, @AuthenticationPrincipal Jwt jwt) {
-        if (jwt != null) {
-            req.setSessionKey(jwt.getClaims().get("origin_jti").toString());
-        }
-        Integer result = priceTypeService.updatePriceType(req);
-        Map<String, Integer> data = Map.of("priceTypeId", result);
-        return ApiResponse.success("Price Type " + req.getPriceTypeName() + " Updated", data);
-    }
+
+import {
+  createPriceType,
+  updatePriceType,
+  deletePriceType,
+  getLocationPriceType,
+} from "../../service/pricetype/priceTypeService";
+
+export const priceTypeResolvers = {
+  Mutation: {
+    createPriceType: async (_: any, { request }: any, ctx: any) => {
+      ctx.logger.info("Create Price Type", { request });
+      return await createPriceType(request, ctx);
+    },
+    updatePriceType: async (_: any, { request }: any, ctx: any) => {
+      ctx.logger.info("Update Price Type", { request });
+      return await updatePriceType(request, ctx);
+    },
+    deletePriceType: async (_: any, { request }: any, ctx: any) => {
+      ctx.logger.info("Delete Price Type", { request });
+      return await deletePriceType(request, ctx);
+    },
+  },
+  Query: {
+    getLocationPriceType: async (_: any, { request }: any, ctx: any) => {
+      ctx.logger.info("Get Location Price Type", { request });
+      return await getLocationPriceType(request, ctx);
+    },
+  },
+};
+
+
+import { httpClient } from "../../utils/http/httpClient";
+
+async function callPriceTypeData(method: string, endpoint: string, request: any, context: any) {
+  const baseUrl = process.env.SPRINGBOOT_BASE_ENDPOINT;
+  const url = `${baseUrl}/api/v1/price-types${endpoint}`;
+  return await httpClient(
+    url,
+    {
+      method: method,
+      body: request,
+    },
+    context.logger,
+    context
+  );
 }
 
-
-
-package com.hlt.api.service;
-
-import com.hlt.api.dtos.request.TicketRequest;
-
-import java.util.List;
-import java.util.Map;
-
-public interface IPriceTypeService {
-
-    List<Map<String, Object>> getLocationPriceType(TicketRequest req);
-
-    Integer createPriceType(TicketRequest req);
-
-    Integer updatePriceType(TicketRequest req);
+export async function createPriceType(request: any, context: any) {
+  return await callPriceTypeData("POST", "/create", request, context);
 }
 
-
-
-package com.hlt.api.service.serviceimpl;
-
-import com.hlt.api.dao.PriceTypeDao;
-import com.hlt.api.dtos.request.TicketRequest;
-import com.hlt.api.service.IPriceTypeService;
-import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
-
-import java.util.ArrayList;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-
-@Slf4j
-@Service
-public class PriceTypeService implements IPriceTypeService {
-
-    @Autowired
-    private PriceTypeDao priceTypeDao;
-
-    @Override
-    public List<Map<String, Object>> getLocationPriceType(TicketRequest req) {
-        log.info("Fetching Price Types for locationFunctionId: {}", req.getLocationFunctionId());
-
-        List<Map<String, Object>> rows = priceTypeDao.getLocationPriceType(req);
-        List<Map<String, Object>> result = new ArrayList<>();
-        if (rows == null) {
-            return result;
-        }
-        for (Map<String, Object> row : rows) {
-            result.add(new LinkedHashMap<>(row));
-        }
-        return result;
-    }
-
-    @Override
-    @Transactional
-    public Integer createPriceType(TicketRequest req) {
-        log.info("Creating Price Type: {}", req.getPriceTypeName());
-        Integer newId = priceTypeDao.createPriceType(req);
-        req.setPriceTypeId(newId);
-        return newId;
-    }
-
-    @Override
-    @Transactional
-    public Integer updatePriceType(TicketRequest req) {
-        log.info("Updating Price Type: {}", req.getPriceTypeId());
-        Integer result = priceTypeDao.updatePriceType(req);
-        return result;
-    }
+export async function updatePriceType(request: any, context: any) {
+  return await callPriceTypeData("POST", "/update", request, context);
 }
 
-
-
-package com.hlt.api.dao;
-
-import com.hlt.api.dtos.request.TicketRequest;
-import org.springframework.stereotype.Repository;
-
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-
-@Repository
-public class PriceTypeDao extends BaseDao {
-
-    public Integer createPriceType(TicketRequest req) {
-        Map<String, Object> params = new HashMap<>();
-        params.put("p_Session_Key", req.getSessionKey());
-        params.put("p_Location_Function_Id", req.getLocationFunctionId());
-        params.put("p_Price_Type_Name", req.getPriceTypeName());
-        params.put("p_Price_Type_Description", req.getPriceTypeDescription());
-        params.put("p_Base_Price", req.getBasePrice());
-        return executeAndReturnId("usp_Create_Price_Type", "Price_Type_Id", params);
-    }
-
-    public Integer updatePriceType(TicketRequest req) {
-        Map<String, Object> params = new HashMap<>();
-        params.put("p_Session_Key", req.getSessionKey());
-        params.put("p_Location_Function_Id", req.getLocationFunctionId());
-        params.put("p_Price_Type_Id", req.getPriceTypeId());
-        params.put("p_Price_Type_Name", req.getPriceTypeName());
-        params.put("p_Price_Type_Description", req.getPriceTypeDescription());
-        params.put("p_Base_Price", req.getBasePrice());
-        return executeAndReturnId("usp_Update_Price_Type", "Price_Type_Id", params);
-    }
-
-    public List<Map<String, Object>> getLocationPriceType(TicketRequest req) {
-        Map<String, Object> params = new HashMap<>();
-        params.put("p_Session_Key", req.getSessionKey());
-        params.put("p_Location_Function_Id", req.getLocationFunctionId());
-        return executeList("usp_Get_Location_Price_Type", params);
-    }
+export async function deletePriceType(request: any, context: any) {
+  return await callPriceTypeData("DELETE", "/delete", request, context);
 }
 
+export async function getLocationPriceType(request: any, context: any) {
+  return await callPriceTypeData("POST", "/get", request, context);
+}
 
-
-// ADD these fields inside the existing TicketRequest class
-// (sessionKey and locationFunctionId already exist in it)
-
-    // Price Type
-    private Integer priceTypeId;
-    private String priceTypeName;
-    private String priceTypeDescription;
-    private java.math.BigDecimal basePrice;
-
-
-
-public String deletePriceType(TicketRequest req) {
-        Map<String, Object> params = new HashMap<>();
-        params.put("p_Session_Key", req.getSessionKey());
-        params.put("p_Price_Type_Id", req.getPriceTypeId());
-        Map<String, Object> row = executeSingle("usp_Remove_Price_Type", params);
-        return row == null ? null : String.valueOf(row.get("priceTypeName"));
-    }
-
-
-  @Override
-    @Transactional
-    public String deletePriceType(TicketRequest req) {
-        log.info("Soft-deleting Price Type: {}", req.getPriceTypeId());
-        return priceTypeDao.deletePriceType(req);
-    }
-
-
-
-
- @Operation(summary = "Delete Price Type")
-    @DeleteMapping("/delete")
-    public ApiResponse<String> deletePriceType(
-            @RequestBody TicketRequest req, @AuthenticationPrincipal Jwt jwt) {
-        if (jwt != null) {
-            req.setSessionKey(jwt.getClaims().get("origin_jti").toString());
-        }
-        String name = priceTypeService.deletePriceType(req);
-        return ApiResponse.success("Price Type " + name + " Deleted", null);
-    }
-
-
-
- @Override
-    public List<Map<String, Object>> getLocationPriceType(TicketRequest req) {
-        log.info("Fetching Price Types for locationFunctionId: {}", req.getLocationFunctionId());
-        return priceTypeDao.getLocationPriceType(req);
-    }
