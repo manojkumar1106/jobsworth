@@ -1,32 +1,192 @@
-@Override
-public List<Map<String, Object>> getSalesFunnel(TicketRequest req) {
-    log.info("Fetching Sales Funnels for locationFunctionId: {}", req.getLocationFunctionId());
+package com.hlt.api.controller;
 
-    List<Map<String, Object>> rows = salesFunnelDao.getSalesFunnel(req);
-    if (rows == null || rows.isEmpty()) {
-        throw new IllegalArgumentException(
-                "Sales funnel not found for locationFunctionId=" + req.getLocationFunctionId());
+import com.hlt.api.dtos.request.TicketRequest;
+import com.hlt.api.service.IPriceTypeService;
+// TODO: adjust this import to wherever ApiResponse lives in your project
+import com.hlt.api.dtos.response.ApiResponse;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+import java.util.List;
+import java.util.Map;
+
+@RestController
+@RequestMapping("/api/v1/price-types")
+@Tag(name = "8. Price Type Management", description = "Location Price Types")
+public class PriceTypeController {
+
+    @Autowired
+    private IPriceTypeService priceTypeService;
+
+    @Operation(summary = "Get Location Price Types")
+    @PostMapping("/get")
+    public ApiResponse<List<Map<String, Object>>> getLocationPriceType(
+            @RequestBody TicketRequest req, @AuthenticationPrincipal Jwt jwt) {
+        if (jwt != null) {
+            req.setSessionKey(jwt.getClaims().get("origin_jti").toString());
+        }
+        List<Map<String, Object>> priceTypes = priceTypeService.getLocationPriceType(req);
+        return ApiResponse.success("Price Types Retrieved", priceTypes);
     }
 
-    List<Map<String, Object>> result = new ArrayList<>();
-    for (Map<String, Object> row : rows) {
-        Map<String, Object> funnel = new LinkedHashMap<>(row);
-        addLocalCutoffTime(req, funnel);
-        funnel.remove("todayCutoffTimeUtc");
-        result.add(funnel);
+    @Operation(summary = "Create Price Type")
+    @PostMapping("/create")
+    public ApiResponse<Map<String, Integer>> createPriceType(
+            @RequestBody TicketRequest req, @AuthenticationPrincipal Jwt jwt) {
+        if (jwt != null) {
+            req.setSessionKey(jwt.getClaims().get("origin_jti").toString());
+        }
+        Integer newId = priceTypeService.createPriceType(req);
+        Map<String, Integer> data = Map.of("priceTypeId", newId);
+        return ApiResponse.success("Price Type " + req.getPriceTypeName() + " Created", data);
     }
-    return result;
+
+    @Operation(summary = "Update Price Type")
+    @PostMapping("/update")
+    public ApiResponse<Map<String, Integer>> updatePriceType(
+            @RequestBody TicketRequest req, @AuthenticationPrincipal Jwt jwt) {
+        if (jwt != null) {
+            req.setSessionKey(jwt.getClaims().get("origin_jti").toString());
+        }
+        Integer result = priceTypeService.updatePriceType(req);
+        Map<String, Integer> data = Map.of("priceTypeId", result);
+        return ApiResponse.success("Price Type " + req.getPriceTypeName() + " Updated", data);
+    }
 }
 
 
 
-private void normalizeCutoffToUtc(TicketRequest req) {
-    if (req.getSalesCutoffUtc() != null || req.getSalesCutoffLocalTime() == null) {
-        return;
-    }
-    String timezone = salesFunnelDao.getTimezoneByLocation(req);
-    TimezoneConverter.validateTimezone(timezone);
+package com.hlt.api.service;
 
-    OffsetDateTime utc = TimezoneConverter.toUtc(req.getSalesCutoffLocalTime(), timezone);
-    req.setSalesCutoffUtc(utc.toLocalTime());
+import com.hlt.api.dtos.request.TicketRequest;
+
+import java.util.List;
+import java.util.Map;
+
+public interface IPriceTypeService {
+
+    List<Map<String, Object>> getLocationPriceType(TicketRequest req);
+
+    Integer createPriceType(TicketRequest req);
+
+    Integer updatePriceType(TicketRequest req);
 }
+
+
+
+package com.hlt.api.service.serviceimpl;
+
+import com.hlt.api.dao.PriceTypeDao;
+import com.hlt.api.dtos.request.TicketRequest;
+import com.hlt.api.service.IPriceTypeService;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+
+@Slf4j
+@Service
+public class PriceTypeService implements IPriceTypeService {
+
+    @Autowired
+    private PriceTypeDao priceTypeDao;
+
+    @Override
+    public List<Map<String, Object>> getLocationPriceType(TicketRequest req) {
+        log.info("Fetching Price Types for locationFunctionId: {}", req.getLocationFunctionId());
+
+        List<Map<String, Object>> rows = priceTypeDao.getLocationPriceType(req);
+        List<Map<String, Object>> result = new ArrayList<>();
+        if (rows == null) {
+            return result;
+        }
+        for (Map<String, Object> row : rows) {
+            result.add(new LinkedHashMap<>(row));
+        }
+        return result;
+    }
+
+    @Override
+    @Transactional
+    public Integer createPriceType(TicketRequest req) {
+        log.info("Creating Price Type: {}", req.getPriceTypeName());
+        Integer newId = priceTypeDao.createPriceType(req);
+        req.setPriceTypeId(newId);
+        return newId;
+    }
+
+    @Override
+    @Transactional
+    public Integer updatePriceType(TicketRequest req) {
+        log.info("Updating Price Type: {}", req.getPriceTypeId());
+        Integer result = priceTypeDao.updatePriceType(req);
+        return result;
+    }
+}
+
+
+
+package com.hlt.api.dao;
+
+import com.hlt.api.dtos.request.TicketRequest;
+import org.springframework.stereotype.Repository;
+
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+@Repository
+public class PriceTypeDao extends BaseDao {
+
+    public Integer createPriceType(TicketRequest req) {
+        Map<String, Object> params = new HashMap<>();
+        params.put("p_Session_Key", req.getSessionKey());
+        params.put("p_Location_Function_Id", req.getLocationFunctionId());
+        params.put("p_Price_Type_Name", req.getPriceTypeName());
+        params.put("p_Price_Type_Description", req.getPriceTypeDescription());
+        params.put("p_Base_Price", req.getBasePrice());
+        return executeAndReturnId("usp_Create_Price_Type", "Price_Type_Id", params);
+    }
+
+    public Integer updatePriceType(TicketRequest req) {
+        Map<String, Object> params = new HashMap<>();
+        params.put("p_Session_Key", req.getSessionKey());
+        params.put("p_Location_Function_Id", req.getLocationFunctionId());
+        params.put("p_Price_Type_Id", req.getPriceTypeId());
+        params.put("p_Price_Type_Name", req.getPriceTypeName());
+        params.put("p_Price_Type_Description", req.getPriceTypeDescription());
+        params.put("p_Base_Price", req.getBasePrice());
+        return executeAndReturnId("usp_Update_Price_Type", "Price_Type_Id", params);
+    }
+
+    public List<Map<String, Object>> getLocationPriceType(TicketRequest req) {
+        Map<String, Object> params = new HashMap<>();
+        params.put("p_Session_Key", req.getSessionKey());
+        params.put("p_Location_Function_Id", req.getLocationFunctionId());
+        return executeList("usp_Get_Location_Price_Type", params);
+    }
+}
+
+
+
+// ADD these fields inside the existing TicketRequest class
+// (sessionKey and locationFunctionId already exist in it)
+
+    // Price Type
+    private Integer priceTypeId;
+    private String priceTypeName;
+    private String priceTypeDescription;
+    private java.math.BigDecimal basePrice;
+
