@@ -190,3 +190,34 @@ public class PriceTypeDao extends BaseDao {
     private String priceTypeDescription;
     private java.math.BigDecimal basePrice;
 
+
+
+public String deletePriceType(TicketRequest req) {
+        Map<String, Object> params = new HashMap<>();
+        params.put("p_Session_Key", req.getSessionKey());
+        params.put("p_Price_Type_Id", req.getPriceTypeId());
+        Map<String, Object> row = executeSingle("usp_Remove_Price_Type", params);
+        return row == null ? null : String.valueOf(row.get("priceTypeName"));
+    }
+
+
+  @Override
+    @Transactional
+    public String deletePriceType(TicketRequest req) {
+        log.info("Soft-deleting Price Type: {}", req.getPriceTypeId());
+        return priceTypeDao.deletePriceType(req);
+    }
+
+
+
+
+ @Operation(summary = "Delete Price Type")
+    @DeleteMapping("/delete")
+    public ApiResponse<String> deletePriceType(
+            @RequestBody TicketRequest req, @AuthenticationPrincipal Jwt jwt) {
+        if (jwt != null) {
+            req.setSessionKey(jwt.getClaims().get("origin_jti").toString());
+        }
+        String name = priceTypeService.deletePriceType(req);
+        return ApiResponse.success("Price Type " + name + " Deleted", null);
+    }
