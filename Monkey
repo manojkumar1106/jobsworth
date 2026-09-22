@@ -1,76 +1,325 @@
-export const priceTypeTypeDefs = `
-  input CreatePriceType {
-    locationFunctionId: Int!
-    priceTypeName: String!
-    priceTypeDescription: String
-    basePrice: Float!
-  }
+// Amenity Price Type
+    private Integer amenityId;
+    private Integer amenityPriceTypeId;
+    private String amenityPriceTypeName;
+    private java.math.BigDecimal amenityBasePrice;
 
-  input UpdatePriceType {
-    locationFunctionId: Int!
+
+
+package com.hlt.api.controller;
+
+import com.hlt.api.dtos.request.TicketRequest;
+import com.hlt.api.dtos.response.ApiResponse;
+import com.hlt.api.service.IAmenityPriceTypeService;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+import java.util.List;
+import java.util.Map;
+
+@RestController
+@RequestMapping("/api/v1/amenity-price-types")
+@Tag(name = "9. Amenity Price Type Management", description = "Amenity-specific pricing per Price Type")
+public class AmenityPriceTypeController {
+
+    @Autowired
+    private IAmenityPriceTypeService amenityPriceTypeService;
+
+    @Operation(summary = "Get Amenity Pricing")
+    @PostMapping("/get")
+    public ApiResponse<List<Map<String, Object>>> getAmenityPricing(
+            @RequestBody TicketRequest req, @AuthenticationPrincipal Jwt jwt) {
+        if (jwt != null) {
+            req.setSessionKey(jwt.getClaims().get("origin_jti").toString());
+        }
+        List<Map<String, Object>> pricing = amenityPriceTypeService.getAmenityPricing(req);
+        return ApiResponse.success("Amenity Pricing Retrieved", pricing);
+    }
+
+    @Operation(summary = "Create Amenity Price Type")
+    @PostMapping("/create")
+    public ApiResponse<Map<String, Integer>> createAmenityPriceType(
+            @RequestBody TicketRequest req, @AuthenticationPrincipal Jwt jwt) {
+        if (jwt != null) {
+            req.setSessionKey(jwt.getClaims().get("origin_jti").toString());
+        }
+        Integer newId = amenityPriceTypeService.createAmenityPriceType(req);
+        Map<String, Integer> data = Map.of("amenityPriceTypeId", newId);
+        return ApiResponse.success("Amenity Price Type " + req.getAmenityPriceTypeName() + " Created", data);
+    }
+
+    @Operation(summary = "Update Amenity Price Type")
+    @PostMapping("/update")
+    public ApiResponse<Map<String, Integer>> updateAmenityPriceType(
+            @RequestBody TicketRequest req, @AuthenticationPrincipal Jwt jwt) {
+        if (jwt != null) {
+            req.setSessionKey(jwt.getClaims().get("origin_jti").toString());
+        }
+        Integer result = amenityPriceTypeService.updateAmenityPriceType(req);
+        Map<String, Integer> data = Map.of("amenityPriceTypeId", result);
+        return ApiResponse.success("Amenity Price Type " + req.getAmenityPriceTypeName() + " Updated", data);
+    }
+
+    @Operation(summary = "Delete Amenity Price Type")
+    @DeleteMapping("/delete")
+    public ApiResponse<String> deleteAmenityPriceType(
+            @RequestBody TicketRequest req, @AuthenticationPrincipal Jwt jwt) {
+        if (jwt != null) {
+            req.setSessionKey(jwt.getClaims().get("origin_jti").toString());
+        }
+        String name = amenityPriceTypeService.deleteAmenityPriceType(req);
+        return ApiResponse.success("Amenity Price Type " + name + " Deleted", null);
+    }
+}
+
+
+package com.hlt.api.dao;
+
+import com.hlt.api.dtos.request.TicketRequest;
+import org.springframework.stereotype.Repository;
+
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+@Repository
+public class AmenityPriceTypeDao extends BaseDao {
+
+    public Integer createAmenityPriceType(TicketRequest req) {
+        Map<String, Object> params = new HashMap<>();
+        params.put("p_Session_Key", req.getSessionKey());
+        params.put("p_Amenity_Id", req.getAmenityId());
+        params.put("p_Price_Type_Id", req.getPriceTypeId());
+        params.put("p_Amenity_Price_Type_Name", req.getAmenityPriceTypeName());
+        params.put("p_Amenity_Base_Price", req.getAmenityBasePrice());
+        return executeAndReturnId("usp_Create_Amenity_Price_Type", "Amenity_Price_Type_Id", params);
+    }
+
+    public Integer updateAmenityPriceType(TicketRequest req) {
+        Map<String, Object> params = new HashMap<>();
+        params.put("p_Session_Key", req.getSessionKey());
+        params.put("p_Amenity_Price_Type_Id", req.getAmenityPriceTypeId());
+        params.put("p_Price_Type_Id", req.getPriceTypeId());
+        params.put("p_Amenity_Price_Type_Name", req.getAmenityPriceTypeName());
+        params.put("p_Amenity_Base_Price", req.getAmenityBasePrice());
+        return executeAndReturnId("usp_Update_Amenity_Price_Type", "Amenity_Price_Type_Id", params);
+    }
+
+    public List<Map<String, Object>> getAmenityPricing(TicketRequest req) {
+        Map<String, Object> params = new HashMap<>();
+        params.put("p_Session_Key", req.getSessionKey());
+        params.put("p_Amenity_Id", req.getAmenityId());
+        return executeList("usp_Get_Amenity_Pricing", params);
+    }
+
+    // Same convention as PriceTypeDao.deletePriceType / SalesFunnelDao.deleteSalesFunnel:
+    // read the removed name back from a single-row, single-column result set
+    // rather than a declared OUT param. Note: as given, usp_Remove_Amenity_Price_Type
+    // does not actually SELECT a name back (and has its own bugs - see chat) so this
+    // will return null until that proc is updated to match the Price_Type/Sales_Funnel
+    // pattern (capture the name up front, SELECT it back after the UPDATE).
+    public String deleteAmenityPriceType(TicketRequest req) {
+        Map<String, Object> params = new HashMap<>();
+        params.put("p_Session_Key", req.getSessionKey());
+        params.put("p_Amenity_Price_Type_Id", req.getAmenityPriceTypeId());
+        Map<String, Object> row = executeSingle("usp_Remove_Amenity_Price_Type", params);
+        if (row == null || row.isEmpty()) {
+            return null;
+        }
+        Object value = row.values().iterator().next();
+        return value == null ? null : String.valueOf(value);
+    }
+}
+
+
+
+package com.hlt.api.service;
+
+import com.hlt.api.dtos.request.TicketRequest;
+
+import java.util.List;
+import java.util.Map;
+
+public interface IAmenityPriceTypeService {
+
+    List<Map<String, Object>> getAmenityPricing(TicketRequest req);
+
+    Integer createAmenityPriceType(TicketRequest req);
+
+    Integer updateAmenityPriceType(TicketRequest req);
+
+    String deleteAmenityPriceType(TicketRequest req);
+}
+
+
+
+package com.hlt.api.service.serviceimpl;
+
+import com.hlt.api.dao.AmenityPriceTypeDao;
+import com.hlt.api.dtos.request.TicketRequest;
+import com.hlt.api.service.IAmenityPriceTypeService;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+
+@Slf4j
+@Service
+public class AmenityPriceTypeService implements IAmenityPriceTypeService {
+
+    @Autowired
+    private AmenityPriceTypeDao amenityPriceTypeDao;
+
+    @Override
+    public List<Map<String, Object>> getAmenityPricing(TicketRequest req) {
+        log.info("Fetching Amenity Pricing for amenityId: {}", req.getAmenityId());
+        List<Map<String, Object>> flatRows = amenityPriceTypeDao.getAmenityPricing(req);
+        return groupPricingByAmenity(flatRows);
+    }
+
+    // usp_Get_Amenity_Pricing returns one flat row per (Amenity_Id, Price_Type_Id):
+    // amenityId, priceTypeId, amenityPriceTypeName, amenityBasePrice.
+    // Frontend wants { amenityId, prices: [{ category, price }, ...] } -
+    // group here the same way SalesFunnelService.groupAmenitiesByLocation does.
+    private List<Map<String, Object>> groupPricingByAmenity(List<Map<String, Object>> flatRows) {
+        Map<Object, Map<String, Object>> groupsByAmenityId = new LinkedHashMap<>();
+        if (flatRows == null) {
+            return List.of();
+        }
+        for (Map<String, Object> row : flatRows) {
+            Object amenityId = row.get("amenityId");
+            Map<String, Object> amenityGroup = groupsByAmenityId.computeIfAbsent(amenityId, id -> {
+                Map<String, Object> group = new LinkedHashMap<>();
+                group.put("amenityId", id);
+                group.put("prices", new ArrayList<Map<String, Object>>());
+                return group;
+            });
+
+            Map<String, Object> price = new LinkedHashMap<>();
+            price.put("category", row.get("priceTypeId"));
+            price.put("price", row.get("amenityBasePrice"));
+            price.put("label", row.get("amenityPriceTypeName"));
+            @SuppressWarnings("unchecked")
+            List<Map<String, Object>> prices = (List<Map<String, Object>>) amenityGroup.get("prices");
+            prices.add(price);
+        }
+        return new ArrayList<>(groupsByAmenityId.values());
+    }
+
+    @Override
+    @Transactional
+    public Integer createAmenityPriceType(TicketRequest req) {
+        log.info("Creating Amenity Price Type: {}", req.getAmenityPriceTypeName());
+        Integer newId = amenityPriceTypeDao.createAmenityPriceType(req);
+        req.setAmenityPriceTypeId(newId);
+        return newId;
+    }
+
+    @Override
+    @Transactional
+    public Integer updateAmenityPriceType(TicketRequest req) {
+        log.info("Updating Amenity Price Type: {}", req.getAmenityPriceTypeId());
+        return amenityPriceTypeDao.updateAmenityPriceType(req);
+    }
+
+    @Override
+    @Transactional
+    public String deleteAmenityPriceType(TicketRequest req) {
+        log.info("Soft-deleting Amenity Price Type: {}", req.getAmenityPriceTypeId());
+        return amenityPriceTypeDao.deleteAmenityPriceType(req);
+    }
+}
+
+
+=========
+
+export const amenityPriceTypeTypeDefs = `
+  input CreateAmenityPriceType {
+    amenityId: Int!
     priceTypeId: Int!
-    priceTypeName: String!
-    priceTypeDescription: String
-    basePrice: Float!
+    amenityPriceTypeName: String!
+    amenityBasePrice: Float!
   }
 
-  input DeletePriceType {
+  input UpdateAmenityPriceType {
+    amenityPriceTypeId: Int!
     priceTypeId: Int!
+    amenityPriceTypeName: String!
+    amenityBasePrice: Float!
   }
 
-  input GetLocationPriceType {
-    locationFunctionId: Int!
+  input DeleteAmenityPriceType {
+    amenityPriceTypeId: Int!
+  }
+
+  input GetAmenityPricing {
+    amenityId: Int!
   }
 
   type Mutation {
-    createPriceType(request: CreatePriceType): SessionResponse
-    updatePriceType(request: UpdatePriceType): SessionResponse
-    deletePriceType(request: DeletePriceType): SessionResponse
+    createAmenityPriceType(request: CreateAmenityPriceType): SessionResponse
+    updateAmenityPriceType(request: UpdateAmenityPriceType): SessionResponse
+    deleteAmenityPriceType(request: DeleteAmenityPriceType): SessionResponse
   }
 
   type Query {
-    getLocationPriceType(request: GetLocationPriceType): SessionResponse
+    getAmenityPricing(request: GetAmenityPricing): SessionResponse
   }
 `;
 
 
 
-import {
-  createPriceType,
-  updatePriceType,
-  deletePriceType,
-  getLocationPriceType,
-} from "../../service/pricetype/priceTypeService";
 
-export const priceTypeResolvers = {
+import {
+  createAmenityPriceType,
+  updateAmenityPriceType,
+  deleteAmenityPriceType,
+  getAmenityPricing,
+} from "../../service/amenitypricetype/amenityPriceTypeService";
+
+export const amenityPriceTypeResolvers = {
   Mutation: {
-    createPriceType: async (_: any, { request }: any, ctx: any) => {
-      ctx.logger.info("Create Price Type", { request });
-      return await createPriceType(request, ctx);
+    createAmenityPriceType: async (_: any, { request }: any, ctx: any) => {
+      ctx.logger.info("Create Amenity Price Type", { request });
+      return await createAmenityPriceType(request, ctx);
     },
-    updatePriceType: async (_: any, { request }: any, ctx: any) => {
-      ctx.logger.info("Update Price Type", { request });
-      return await updatePriceType(request, ctx);
+    updateAmenityPriceType: async (_: any, { request }: any, ctx: any) => {
+      ctx.logger.info("Update Amenity Price Type", { request });
+      return await updateAmenityPriceType(request, ctx);
     },
-    deletePriceType: async (_: any, { request }: any, ctx: any) => {
-      ctx.logger.info("Delete Price Type", { request });
-      return await deletePriceType(request, ctx);
+    deleteAmenityPriceType: async (_: any, { request }: any, ctx: any) => {
+      ctx.logger.info("Delete Amenity Price Type", { request });
+      return await deleteAmenityPriceType(request, ctx);
     },
   },
   Query: {
-    getLocationPriceType: async (_: any, { request }: any, ctx: any) => {
-      ctx.logger.info("Get Location Price Type", { request });
-      return await getLocationPriceType(request, ctx);
+    getAmenityPricing: async (_: any, { request }: any, ctx: any) => {
+      ctx.logger.info("Get Amenity Pricing", { request });
+      return await getAmenityPricing(request, ctx);
     },
   },
 };
 
 
+
 import { httpClient } from "../../utils/http/httpClient";
 
-async function callPriceTypeData(method: string, endpoint: string, request: any, context: any) {
+async function callAmenityPriceTypeData(method: string, endpoint: string, request: any, context: any) {
   const baseUrl = process.env.SPRINGBOOT_BASE_ENDPOINT;
-  const url = `${baseUrl}/api/v1/price-types${endpoint}`;
+  const url = `${baseUrl}/api/v1/amenity-price-types${endpoint}`;
   return await httpClient(
     url,
     {
@@ -82,33 +331,20 @@ async function callPriceTypeData(method: string, endpoint: string, request: any,
   );
 }
 
-export async function createPriceType(request: any, context: any) {
-  return await callPriceTypeData("POST", "/create", request, context);
+export async function createAmenityPriceType(request: any, context: any) {
+  return await callAmenityPriceTypeData("POST", "/create", request, context);
 }
 
-export async function updatePriceType(request: any, context: any) {
-  return await callPriceTypeData("POST", "/update", request, context);
+export async function updateAmenityPriceType(request: any, context: any) {
+  return await callAmenityPriceTypeData("POST", "/update", request, context);
 }
 
-export async function deletePriceType(request: any, context: any) {
-  return await callPriceTypeData("DELETE", "/delete", request, context);
+export async function deleteAmenityPriceType(request: any, context: any) {
+  return await callAmenityPriceTypeData("DELETE", "/delete", request, context);
 }
 
-export async function getLocationPriceType(request: any, context: any) {
-  return await callPriceTypeData("POST", "/get", request, context);
+export async function getAmenityPricing(request: any, context: any) {
+  return await callAmenityPriceTypeData("POST", "/get", request, context);
 }
 
 
-
-public String deletePriceType(TicketRequest req) {
-        Map<String, Object> params = new HashMap<>();
-        params.put("p_Session_Key", req.getSessionKey());
-        params.put("p_Price_Type_Id", req.getPriceTypeId());
-        Map<String, Object> row = executeSingle("usp_Remove_Price_Type", params);
-        if (row == null || row.isEmpty()) {
-            return null;
-        }
-        Object value = row.values().iterator().next();
-        return value == null ? null : String.valueOf(value);
-    }
-}
