@@ -98,3 +98,17 @@ export async function getLocationPriceType(request: any, context: any) {
   return await callPriceTypeData("POST", "/get", request, context);
 }
 
+
+
+public String deletePriceType(TicketRequest req) {
+        Map<String, Object> params = new HashMap<>();
+        params.put("p_Session_Key", req.getSessionKey());
+        params.put("p_Price_Type_Id", req.getPriceTypeId());
+        Map<String, Object> row = executeSingle("usp_Remove_Price_Type", params);
+        if (row == null || row.isEmpty()) {
+            return null;
+        }
+        Object value = row.values().iterator().next();
+        return value == null ? null : String.valueOf(value);
+    }
+}
