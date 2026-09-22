@@ -348,3 +348,32 @@ export async function getAmenityPricing(request: any, context: any) {
 }
 
 
+
+
+  @Override
+    public List<Map<String, Object>> getAmenityPricing(TicketRequest req) {
+        log.info("Fetching Amenity Pricing for amenityId: {}", req.getAmenityId());
+        List<Map<String, Object>> rows = amenityPriceTypeDao.getAmenityPricing(req);
+
+        // usp_Get_Amenity_Pricing returns one flat row per Amenity_Price_Type_Id,
+        // all for the single Amenity_Id in the request. Nest them under that
+        // amenityId instead of returning a flat list.
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("amenityId", req.getAmenityId());
+
+        List<Map<String, Object>> priceTypes = new ArrayList<>();
+        if (rows != null) {
+            for (Map<String, Object> row : rows) {
+                Map<String, Object> priceType = new LinkedHashMap<>();
+                priceType.put("amenityPriceTypeId", row.get("amenityPriceTypeId"));
+                priceType.put("priceTypeId", row.get("priceTypeId"));
+                priceType.put("amenityPriceTypeName", row.get("amenityPriceTypeName"));
+                priceType.put("amenityBasePrice", row.get("amenityBasePrice"));
+                priceTypes.add(priceType);
+            }
+        }
+        result.put("priceTypes", priceTypes);
+
+        return List.of(result);
+    }
+
