@@ -1,43 +1,14 @@
-import lombok.extern.slf4j.Slf4j;
-import org.springframework.http.HttpStatus;
-import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.ExceptionHandler;
-import org.springframework.web.bind.annotation.RestControllerAdvice;
-
-import java.time.LocalDateTime;
-import java.util.LinkedHashMap;
-import java.util.Map;
-
-@Slf4j
-@RestControllerAdvice
-public class GlobalExceptionHandler {
-
-    @ExceptionHandler(RuntimeException.class)
-    public ResponseEntity<Map<String, Object>> handleRuntime(RuntimeException ex) {
-        log.error("RuntimeException: {}", ex.getMessage(), ex);
-        String msg = ex.getMessage() != null ? ex.getMessage() : "Request failed";
-
-        Map<String, Object> error = new LinkedHashMap<>();
-        error.put("success", false);   // new
-        error.put("message", msg);     // new
-        error.put("data", null);       // new
-        error.put("status", HttpStatus.BAD_REQUEST.value());
-        error.put("error", msg);
-        error.put("timestamp", LocalDateTime.now().toString());
-        return ResponseEntity.badRequest().body(error);
+private void normalizeCutoffToUtc(TicketRequest req) {
+    if (req.getSalesCutoffUtc() != null) {
+        return;
     }
-
-    @ExceptionHandler(Exception.class)
-    public ResponseEntity<Map<String, Object>> handleGeneral(Exception ex) {
-        log.error("Exception: ", ex);
-
-        Map<String, Object> error = new LinkedHashMap<>();
-        error.put("success", false);   // new
-        error.put("message", "Internal server error");  // new
-        error.put("data", null);       // new
-        error.put("status", HttpStatus.INTERNAL_SERVER_ERROR.value());
-        error.put("error", "Internal server error");
-        error.put("timestamp", LocalDateTime.now().toString());
-        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(error);
+    if (req.getSalesCutoffLocalTime() == null) {
+        return;
     }
+    String timezone = salesFunnelDao.getTimezoneByLocation(req);
+    TimezoneConverter.validateTimezone(timezone);
+    LocalDateTime localDateTime = LocalDate.now(ZoneId.of(timezone))
+            .atTime(req.getSalesCutoffLocalTime().truncatedTo(ChronoUnit.MINUTES));
+    OffsetDateTime utc = TimezoneConverter.toUtc(localDateTime, timezone);
+    req.setSalesCutoffUtc(utc.toLocalTime().truncatedTo(ChronoUnit.MINUTES));
 }
