@@ -1,162 +1,43 @@
-@Transactional
-public UpdateSystemDiscountResponse updateSystemDiscount(UpdateSystemDiscountRequest request) {
-    try {
-        // Validates dates and timezone. Exceptions are caught in the catch block below.
-        convertDatesToUtcIfPresent(request);
-
-        Map<String, Object> systemDiscount = null;
-        ObjectMapper objectMapper = new ObjectMapper();
-        objectMapper.registerModule(new JavaTimeModule());
-        SystemDiscount sdObj = new SystemDiscount();
-        
-        boolean needsApproval = Boolean.TRUE.equals(request.getManagerApprovalRequired());
-
-        if (needsApproval) {
-            CreateSystemDiscountRequest create = new CreateSystemDiscountRequest();
-            BeanUtils.copyProperties(request, create);
-            systemDiscount = systemDiscountDao.createSystemDiscount(create);
-            
-            if (systemDiscount == null) {
-                // Return clear error message for GraphQL instead of throwing exception
-                UpdateSystemDiscountResponse errorResponse = new UpdateSystemDiscountResponse();
-                errorResponse.setSuccess(false);
-                errorResponse.setMessage("System discount not found for id=" + request.getSystemDiscountId());
-                return errorResponse;
-            }
-            
-            sdObj = objectMapper.convertValue(systemDiscount, SystemDiscount.class);
-            log.info("Created pending child {} for discount {}. Original UNTOUCHED.", sdObj.getParentId(), sdObj.getId());
-            
-            UpdateSystemDiscountResponse response = new UpdateSystemDiscountResponse(sdObj.getId(), sdObj.getParentId(), "PENDING_APPROVAL");
-            response.setSuccess(true);
-            return response;
-            
-        } else {
-            systemDiscount = systemDiscountDao.updateSystemDiscount(request);
-            
-            if (systemDiscount == null) {
-                // Return clear error message for GraphQL instead of throwing exception
-                UpdateSystemDiscountResponse errorResponse = new UpdateSystemDiscountResponse();
-                errorResponse.setSuccess(false);
-                errorResponse.setMessage("System discount not found for id=" + request.getSystemDiscountId());
-                return errorResponse;
-            }
-            
-            sdObj = objectMapper.convertValue(systemDiscount, SystemDiscount.class);
-            
-            if (DiscountStatus.INACTIVE.equals(sdObj.getStatus())) {
-                droolsRuleService.deactivateRuleDefinition("SYSTEM_DISCOUNT", sdObj.getId(), null, request.getSessionKey());
-            } else {
-                droolsRuleService.generateSystemDiscountRule(sdObj, "ADMIN", request.getSessionKey());
-            }
-            
-            UpdateSystemDiscountResponse response = new UpdateSystemDiscountResponse(sdObj.getId(), sdObj.getParentId(), DiscountStatus.PUBLISHED.name());
-            response.setSuccess(true);
-            return response;
-        }
-        
-    } catch (Exception ex) {
-        // Catches ValidationExceptions from convertDatesToUtcIfPresent and any runtime errors
-        log.error("Failed to update system discount: {}", ex.getMessage());
-        
-        UpdateSystemDiscountResponse errorResponse = new UpdateSystemDiscountResponse();
-        errorResponse.setSuccess(false);
-        errorResponse.setMessage(ex.getMessage() != null ? ex.getMessage() : "An unexpected error occurred while processing the discount.");
-        return errorResponse;
-    }
-}
-
-
-
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
-// Mee project lo ValidationException ekkada nunchi vastundo aa import ivvandi
-// import javax.xml.bind.ValidationException; (or custom package)
+import java.time.LocalDateTime;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
+@Slf4j
 @RestControllerAdvice
-public class SystemDiscountExceptionHandler {
+public class GlobalExceptionHandler {
 
-    private static final Logger log = LoggerFactory.getLogger(SystemDiscountExceptionHandler.class);
+    @ExceptionHandler(RuntimeException.class)
+    public ResponseEntity<Map<String, Object>> handleRuntime(RuntimeException ex) {
+        log.error("RuntimeException: {}", ex.getMessage(), ex);
+        String msg = ex.getMessage() != null ? ex.getMessage() : "Request failed";
 
-    // 1. Handling your IllegalArgumentExceptions (e.g., Discount not found)
-    @ExceptionHandler(IllegalArgumentException.class)
-    public ResponseEntity<SessionResponse> handleIllegalArgument(IllegalArgumentException ex) {
-        log.error("Validation failed: {}", ex.getMessage());
-        
-        // success: false mariyu exact text message frontend ki pampistunnam
-        SessionResponse response = new SessionResponse(false, ex.getMessage());
-        return ResponseEntity.ok(response); 
-        // GraphQL errors ni 200 OK tho pampitheనే Apollo fields resolve chestundi null rakunda
+        Map<String, Object> error = new LinkedHashMap<>();
+        error.put("success", false);   // new
+        error.put("message", msg);     // new
+        error.put("data", null);       // new
+        error.put("status", HttpStatus.BAD_REQUEST.value());
+        error.put("error", msg);
+        error.put("timestamp", LocalDateTime.now().toString());
+        return ResponseEntity.badRequest().body(error);
     }
 
-    // 2. Handling your ValidationExceptions (e.g., Start date before end date)
-    @ExceptionHandler(ValidationException.class) // Replace with your exact Exception class
-    public ResponseEntity<SessionResponse> handleValidationException(Exception ex) {
-        log.error("Date/Location validation failed: {}", ex.getMessage());
-        
-        SessionResponse response = new SessionResponse(false, ex.getMessage());
-        return ResponseEntity.ok(response);
-    }
-
-    // 3. Fallback for any other unhandled crashes (like Database down or Drools generation fail)
     @ExceptionHandler(Exception.class)
-    public ResponseEntity<SessionResponse> handleGenericException(Exception ex) {
-        log.error("Unexpected error in SystemDiscountService: ", ex);
-        
-        SessionResponse response = new SessionResponse(false, "An unexpected error occurred while updating the discount.");
-        return ResponseEntity.ok(response);
-    }
-}
+    public ResponseEntity<Map<String, Object>> handleGeneral(Exception ex) {
+        log.error("Exception: ", ex);
 
-
-
-import org.springframework.http.HttpStatus;
-import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.ExceptionHandler;
-import org.springframework.web.bind.annotation.RestControllerAdvice;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
-// Provide the correct import for ValidationException based on your project
-// import javax.xml.bind.ValidationException; (or custom package)
-
-@RestControllerAdvice
-public class SystemDiscountExceptionHandler {
-
-    private static final Logger log = LoggerFactory.getLogger(SystemDiscountExceptionHandler.class);
-
-    // 1. Handling your IllegalArgumentExceptions (e.g., Discount not found)
-    @ExceptionHandler(IllegalArgumentException.class)
-    public ResponseEntity<SessionResponse> handleIllegalArgument(IllegalArgumentException ex) {
-        log.error("Validation failed: {}", ex.getMessage());
-        
-        // Sending success: false and the exact text message to the frontend
-        SessionResponse response = new SessionResponse(false, ex.getMessage());
-        
-        // Returning 200 OK for GraphQL errors ensures Apollo resolves fields without returning null
-        return ResponseEntity.ok(response); 
-    }
-
-    // 2. Handling your ValidationExceptions (e.g., Start date before end date)
-    @ExceptionHandler(ValidationException.class) // Replace with your exact Exception class
-    public ResponseEntity<SessionResponse> handleValidationException(Exception ex) {
-        log.error("Date/Location validation failed: {}", ex.getMessage());
-        
-        SessionResponse response = new SessionResponse(false, ex.getMessage());
-        return ResponseEntity.ok(response);
-    }
-
-    // 3. Fallback for any other unhandled crashes (like Database down or Drools generation fail)
-    @ExceptionHandler(Exception.class)
-    public ResponseEntity<SessionResponse> handleGenericException(Exception ex) {
-        log.error("Unexpected error in SystemDiscountService: ", ex);
-        
-        SessionResponse response = new SessionResponse(false, "An unexpected error occurred while updating the discount.");
-        return ResponseEntity.ok(response);
+        Map<String, Object> error = new LinkedHashMap<>();
+        error.put("success", false);   // new
+        error.put("message", "Internal server error");  // new
+        error.put("data", null);       // new
+        error.put("status", HttpStatus.INTERNAL_SERVER_ERROR.value());
+        error.put("error", "Internal server error");
+        error.put("timestamp", LocalDateTime.now().toString());
+        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(error);
     }
 }
