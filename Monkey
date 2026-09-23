@@ -112,3 +112,51 @@ public class SystemDiscountExceptionHandler {
         return ResponseEntity.ok(response);
     }
 }
+
+
+
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.ExceptionHandler;
+import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+// Provide the correct import for ValidationException based on your project
+// import javax.xml.bind.ValidationException; (or custom package)
+
+@RestControllerAdvice
+public class SystemDiscountExceptionHandler {
+
+    private static final Logger log = LoggerFactory.getLogger(SystemDiscountExceptionHandler.class);
+
+    // 1. Handling your IllegalArgumentExceptions (e.g., Discount not found)
+    @ExceptionHandler(IllegalArgumentException.class)
+    public ResponseEntity<SessionResponse> handleIllegalArgument(IllegalArgumentException ex) {
+        log.error("Validation failed: {}", ex.getMessage());
+        
+        // Sending success: false and the exact text message to the frontend
+        SessionResponse response = new SessionResponse(false, ex.getMessage());
+        
+        // Returning 200 OK for GraphQL errors ensures Apollo resolves fields without returning null
+        return ResponseEntity.ok(response); 
+    }
+
+    // 2. Handling your ValidationExceptions (e.g., Start date before end date)
+    @ExceptionHandler(ValidationException.class) // Replace with your exact Exception class
+    public ResponseEntity<SessionResponse> handleValidationException(Exception ex) {
+        log.error("Date/Location validation failed: {}", ex.getMessage());
+        
+        SessionResponse response = new SessionResponse(false, ex.getMessage());
+        return ResponseEntity.ok(response);
+    }
+
+    // 3. Fallback for any other unhandled crashes (like Database down or Drools generation fail)
+    @ExceptionHandler(Exception.class)
+    public ResponseEntity<SessionResponse> handleGenericException(Exception ex) {
+        log.error("Unexpected error in SystemDiscountService: ", ex);
+        
+        SessionResponse response = new SessionResponse(false, "An unexpected error occurred while updating the discount.");
+        return ResponseEntity.ok(response);
+    }
+}
