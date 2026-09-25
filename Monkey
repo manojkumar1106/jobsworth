@@ -1,6 +1,38 @@
-Map<String, Object> rule = ruleDefinitionDao.findByRuleTypeAndReferenceIdAndActiveTrue(
-                "PROMOTION", p.getId(), session);
-        if (rule != null && rule.get("Rule_Definition_Id") != null) {
-            Integer ruleDefinitionId = Integer.valueOf(rule.get("Rule_Definition_Id").toString());
-            ruleDefinitionDao.deactivateRuleDefinition(ruleDefinitionId, session);
-        }
+@Scheduled(cron = "0 0 * * * *")
+@Transactional
+public void expireSystemDiscounts() {
+    LocalDateTime now = LocalDateTime.now();
+    String session = authClient.createSession();
+
+    List<Map<String, Object>> allDiscounts = systemDiscountDao.getAllSystemDiscounts(session);
+
+    ObjectMapper objectMapper = new ObjectMapper();
+    objectMapper.registerModule(new JavaTimeModule());
+    List<SystemDiscount> discounts = objectMapper.convertValue(
+            allDiscounts, new TypeReference<List<SystemDiscount>>() {});
+
+    List<SystemDiscount> expired = discounts.stream()
+            .filter(SystemDiscount::getActive)
+            .filter(sd -> sd.getEndDate() != null && sd.getEndDate().isBefore(now))
+            .collect(Collectors.toList());
+
+    if (!expired.isEmpty()) {
+        expired.forEach(sd -> {
+            sd.setActive(false);
+            sd.setStatus(DiscountStatus.INACTIVE);
+            log.info("Expiring discount: {}", sd.getTitle());
+
+            UpdateSystemDiscountRequest updateReq = new UpdateSystemDiscountRequest();
+            updateReq.setSessionKey(session);
+            updateReq.setSystemDiscountId(sd.getId());
+            // set whatever status field UpdateSystemDiscountRequest exposes, e.g.:
+            // updateReq.setDiscountStatus(DiscountStatus.INACTIVE.name());
+            systemDiscountDao.updateSystemDiscount(updateReq);
+
+            droolsRuleService.deactivateRuleDefinition(
+                    "SYSTEM_DISCOUNT", sd.getId(), "SYSTEM", session);
+        });
+
+        log.info("Expired {} system discounts", expired.size());
+    }
+}
