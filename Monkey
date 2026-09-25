@@ -1,14 +1,6 @@
-private void normalizeCutoffToUtc(TicketRequest req) {
-    if (req.getSalesCutoffUtc() != null) {
-        return;
-    }
-    if (req.getSalesCutoffLocalTime() == null) {
-        return;
-    }
-    String timezone = salesFunnelDao.getTimezoneByLocation(req);
-    TimezoneConverter.validateTimezone(timezone);
-    LocalDateTime localDateTime = LocalDate.now(ZoneId.of(timezone))
-            .atTime(req.getSalesCutoffLocalTime().truncatedTo(ChronoUnit.MINUTES));
-    OffsetDateTime utc = TimezoneConverter.toUtc(localDateTime, timezone);
-    req.setSalesCutoffUtc(utc.toLocalTime().truncatedTo(ChronoUnit.MINUTES));
-}
+Map<String, Object> rule = ruleDefinitionDao.findByRuleTypeAndReferenceIdAndActiveTrue(
+                "PROMOTION", p.getId(), session);
+        if (rule != null && rule.get("Rule_Definition_Id") != null) {
+            Integer ruleDefinitionId = Integer.valueOf(rule.get("Rule_Definition_Id").toString());
+            ruleDefinitionDao.deactivateRuleDefinition(ruleDefinitionId, session);
+        }
