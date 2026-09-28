@@ -1,38 +1,14 @@
-@Scheduled(cron = "0 0 * * * *")
-@Transactional
-public void expireSystemDiscounts() {
-    LocalDateTime now = LocalDateTime.now();
-    String session = authClient.createSession();
+public List<Map<String, Object>> getReloadRules(String sessionKey) {
+    return executeList("usp_Get_Reload_Rules",
+            Map.of("p_Session_Key", sessionKey));
+}
 
-    List<Map<String, Object>> allDiscounts = systemDiscountDao.getAllSystemDiscounts(session);
 
-    ObjectMapper objectMapper = new ObjectMapper();
-    objectMapper.registerModule(new JavaTimeModule());
-    List<SystemDiscount> discounts = objectMapper.convertValue(
-            allDiscounts, new TypeReference<List<SystemDiscount>>() {});
+private final AuthClient authClient; // inject via constructor
 
-    List<SystemDiscount> expired = discounts.stream()
-            .filter(SystemDiscount::getActive)
-            .filter(sd -> sd.getEndDate() != null && sd.getEndDate().isBefore(now))
-            .collect(Collectors.toList());
-
-    if (!expired.isEmpty()) {
-        expired.forEach(sd -> {
-            sd.setActive(false);
-            sd.setStatus(DiscountStatus.INACTIVE);
-            log.info("Expiring discount: {}", sd.getTitle());
-
-            UpdateSystemDiscountRequest updateReq = new UpdateSystemDiscountRequest();
-            updateReq.setSessionKey(session);
-            updateReq.setSystemDiscountId(sd.getId());
-            // set whatever status field UpdateSystemDiscountRequest exposes, e.g.:
-            // updateReq.setDiscountStatus(DiscountStatus.INACTIVE.name());
-            systemDiscountDao.updateSystemDiscount(updateReq);
-
-            droolsRuleService.deactivateRuleDefinition(
-                    "SYSTEM_DISCOUNT", sd.getId(), "SYSTEM", session);
-        });
-
-        log.info("Expired {} system discounts", expired.size());
-    }
+public synchronized void reloadRules() {
+    String session = authClient.createSession(); // SYSTEMAPICALL -> GLOBAL
+    List<Map<String, Object>> ruleDefinitionMap =
+            ruleDefinitionDao.getReloadRules(session);
+    // rest unchanged (mapper.convertValue, activeRules, KieBuilder...)
 }
