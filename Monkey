@@ -1018,6 +1018,110 @@ public class PromotionExceptionHandler {
 
 
 
+package com.hlt.api.promotion.dao;
+
+import com.hlt.api.dao.BaseDao;
+import com.hlt.api.promotion.exception.PromoLimitExceededException;
+import org.springframework.jdbc.core.simple.SimpleJdbcCall;
+
+import java.sql.Timestamp;
+import java.time.LocalDateTime;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+/**
+ * Promotion-specific DAO base. Reuses BaseDao's call()/jdbcTemplate plumbing but
+ * does NOT reuse BaseDao's validateResultCode(), because the promo procs use a
+ * different result-code convention (-2 session, -3 permission, -4 validation,
+ * -5/-6 limits) than the shared BaseDao's (-1 unauthorized, -2 invalid params).
+ * Touching BaseDao's validateResultCode would affect its other 7 inheritors.
+ */
+public abstract class PromotionBaseDao extends BaseDao {
+
+    protected void executeVoid(String procName, Map<String, Object> params) {
+        Map<String, Object> out = call(procName).execute(params);
+        validatePromoResultCode(out, procName);
+    }
+
+    /** For promo procs that declare the id as a plain OUT param (e.g. OUT p_Result_Code INT). */
+    protected Integer executeReturnId(String procName, String outParamName, Map<String, Object> params) {
+        Map<String, Object> out = call(procName).execute(params);
+        validatePromoResultCode(out, procName);
+        Object value = out.get(outParamName);
+        return value != null ? ((Number) value).intValue() : null;
+    }
+
+    protected String executeReturnType(String procName, String outParamName, Map<String, Object> params) {
+        Map<String, Object> out = call(procName).execute(params);
+        validatePromoResultCode(out, procName);
+        Object value = out.get(outParamName);
+        return value != null ? value.toString() : null;
+    }
+
+    protected Map<String, Object> executeSingle(String procName, Map<String, Object> params) {
+        List<Map<String, Object>> rows = executeList(procName, params);
+        return rows.isEmpty() ? null : rows.get(0);
+    }
+
+    /**
+     * NOTE: bypasses BaseDao.executeList() on purpose, so rows keep the raw
+     * proc column names (Location_Id, Start_Date, ...) instead of going through
+     * BaseDao's convertResponse() camelCase/boolean conversion. If you want the
+     * promo side to receive camelCase keys, delete this override and call
+     * super.executeList(...) instead - then update PromotionServiceNew /
+     * SystemDiscountServiceNew to read e.g. "locationId" instead of "Location_Id".
+     */
+    @SuppressWarnings("unchecked")
+    protected List<Map<String, Object>> executeList(String procName, Map<String, Object> params) {
+        Map<String, Object> out = call(procName).execute(params);
+        validatePromoResultCode(out, procName);
+        List<Map<String, Object>> rows = (List<Map<String, Object>>) out.get("#result-set-1");
+        if (rows == null) return Collections.emptyList();
+        for (Map<String, Object> row : rows) {
+            row.replaceAll((k, v) -> v instanceof Timestamp ts ? ts.toLocalDateTime() : v);
+        }
+        return rows;
+    }
+
+    protected Map<String, Object> buildParams(String sessionKey, Map<String, Object> body, String[][] mapping) {
+        Map<String, Object> params = new HashMap<>();
+        params.put("p_Session_Key", sessionKey);
+        for (String[] m : mapping) {
+            Object v = body != null ? body.get(m[1]) : null;
+            if (v instanceof String s && m[0].endsWith("_Date")) {
+                v = Timestamp.valueOf(LocalDateTime.parse(s));
+            }
+            params.put(m[0], v);
+        }
+        return params;
+    }
+
+    /** Promo proc result-code convention - do NOT merge into BaseDao.validateResultCode(). */
+    protected void validatePromoResultCode(Map<String, Object> out, String procName) {
+        Object raw = out.get("p_Result_Code");
+        int code = raw != null ? ((Number) raw).intValue() : 0;
+        switch (code) {
+            case 1:
+                return;
+            case -2:
+                throw new SecurityException("Invalid session in " + procName);
+            case -3:
+                throw new SecurityException("Permission denied in " + procName);
+            case -4:
+                throw new IllegalArgumentException("Validation failed in " + procName);
+            case -5:
+                throw new PromoLimitExceededException("Promo usage limit reached (global)");
+            case -6:
+                throw new PromoLimitExceededException("Promo usage limit reached (per customer)");
+            default:
+                throw new RuntimeException("DB Error (" + code + ") in " + procName);
+        }
+    }
+}
+
+
 
 
 
