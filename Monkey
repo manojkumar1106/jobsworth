@@ -12,3 +12,26 @@ public synchronized void reloadRules() {
             ruleDefinitionDao.getReloadRules(session);
     // rest unchanged (mapper.convertValue, activeRules, KieBuilder...)
 }
+
+
+Try this bro
+
+import org.springframework.http.HttpMethod;
+
+public Map<String, Object> getPromotionByCode(String sessionKey, String promoCode) {
+ 
+    return execute(() -> hltRestClient.method(HttpMethod.GET)
+            .uri("/api/v1/promotions/code/{promoCode}", promoCode)
+            .header("X-Session-Key", sessionKey)
+            .retrieve()
+            .body(new ParameterizedTypeReference<Map<String, Object>>() {}));
+}
+
+public String getTimezone(String sessionKey, Integer locationId) {
+   
+    return execute(() -> hltRestClient.method(HttpMethod.GET)
+            .uri("/api/v1/locations/{locationId}/timezone", locationId)
+            .header("X-Session-Key", sessionKey)
+            .retrieve()
+            .body(String.class));
+}
