@@ -1121,6 +1121,12 @@ public abstract class PromotionBaseDao extends BaseDao {
     }
 }
 
+protected SimpleJdbcCall call(String procName) {
+    String schemaName = jdbcTemplate.execute((Connection conn) -> conn.getCatalog());
+    return new SimpleJdbcCall(jdbcTemplate)
+            .withCatalogName(schemaName)
+            .withProcedureName(procName);
+}
 
 
 
