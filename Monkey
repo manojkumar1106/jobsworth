@@ -1,76 +1,10 @@
-package hlt.promo.engine.model;
-
-import com.fasterxml.jackson.annotation.JsonAlias;
-import com.fasterxml.jackson.annotation.JsonFormat;
-import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
-import lombok.AllArgsConstructor;
-import lombok.Data;
-import lombok.NoArgsConstructor;
-
-import java.time.LocalDateTime;
-
-/**
- * Read from hlt-api (camelCase keys). If your old code still uses this as a JPA entity,
- * add back your existing @Entity/@Table lines - nothing else here depends on JPA.
- */
-@Data
-@NoArgsConstructor
-@AllArgsConstructor
-@JsonIgnoreProperties(ignoreUnknown = true)
-public class SystemDiscount {
-
-    @JsonAlias({"systemDiscountId", "System_Discount_Id"})
-    private Long id;
-
-    // set on a pending "child" copy created by an update that needs approval
-    @JsonAlias({"parentSystemDiscountId", "Parent_System_Discount_Id"})
-    private Long parentId;
-
-    private Long locationId;
-    private Long amenityId;
-
-    private String title;
-    private String displayName;
-    @JsonAlias({"discountDescription", "Discount_Description"})
-    private String description;   // DroolsRuleService calls getDescription()
-
-    @JsonFormat(with = JsonFormat.Feature.READ_UNKNOWN_ENUM_VALUES_AS_NULL)
-    private DiscountType discountType;
-
-    private Double amount;
-    private Integer minQuantity;
-
-    @JsonFormat(with = JsonFormat.Feature.READ_UNKNOWN_ENUM_VALUES_AS_NULL)
-    private UserType userType;
-
-    private Boolean channelPos;
-    private Boolean channelWeb;
-
-    private LocalDateTime startDate;
-    private LocalDateTime endDate;
-
-    private Boolean stackable;
-    private String stackGroup;
-    private Integer priority;
-    private Boolean managerApprovalRequired;
-    private String icon;
-
-    // PENDING / APPROVED / REJECTED (DB column Approval_Status)
-    private String approvalStatus;
-    private String rejectedReason;
-
-    @JsonAlias({"systemDiscountStatus", "System_Discount_Status"})
-    @JsonFormat(with = JsonFormat.Feature.READ_UNKNOWN_ENUM_VALUES_AS_NULL)
-    private DiscountStatus status;
-
-    @JsonAlias({"isActive", "Is_Active"})
-    private Boolean active = false;
-
-    @JsonAlias({"Is_Removed"})
-    private Boolean isRemoved = false;
-
-    private LocalDateTime createdAt;
-    private LocalDateTime updatedAt;
-    private String createdBy;
-    private String updatedBy;
-}
+List<RuleDefinition> activeRules = ruleDefinitionList.stream()
+        .filter(RuleDefinition::isActive)
+        .filter(r -> {
+            boolean ok = r.getRuleName() != null
+                    && r.getDrlContent() != null && !r.getDrlContent().isBlank();
+            if (!ok) log.warn("Skipping rule id={} name={} - empty DRL/name, regenerate it",
+                    r.getId(), r.getRuleName());
+            return ok;
+        })
+        .collect(Collectors.toList());
