@@ -1,11 +1,632 @@
-public Map<String, Object> createPromotion(Map<String, Object> body, String sessionKey) {
-        return executeSingle("usp_Create_Promotion", buildParams(sessionKey, body, FIELDS));
+package hlt.promo.engine.client;
+
+import hlt.promo.engine.exception.HltApiException;
+import hlt.promo.engine.exception.PromoLimitExceededException;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.core.ParameterizedTypeReference;
+import org.springframework.http.HttpMethod;
+import org.springframework.http.MediaType;
+import org.springframework.stereotype.Service;
+import org.springframework.web.client.ResourceAccessException;
+import org.springframework.web.client.RestClient;
+import org.springframework.web.client.RestClientResponseException;
+
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.function.Supplier;
+
+@Service
+@RequiredArgsConstructor
+@Slf4j
+public class PromotionApiClient {
+
+    private static final ParameterizedTypeReference<Map<String, Object>> MAP = new ParameterizedTypeReference<>() {};
+    private static final ParameterizedTypeReference<List<Map<String, Object>>> LIST = new ParameterizedTypeReference<>() {};
+    private static final String SESSION = "X-Session-Key";
+
+    private final RestClient hltRestClient;
+
+    // ---------------- promotions ----------------
+    public Map<String, Object> getPromotionByCode(String sessionKey, String promoCode) {
+        return get(sessionKey, "/api/v1/promotions/code/{c}", MAP, promoCode);
     }
 
-    public Map<String, Object> updatePromotion(Map<String, Object> body, String sessionKey) {
-        Map<String, Object> params = buildParams(sessionKey, body, FIELDS);
-        params.put("p_Promotion_Id", body.get("Promotion_Id"));
-        return executeSingle("usp_Update_Promotion", params);
+    public List<Map<String, Object>> getAllPromotions(String sessionKey) {
+        return get(sessionKey, "/api/v1/promotions", LIST);
+    }
+
+    public Map<String, Object> createPromotion(String sessionKey, Object request) {
+        return send(sessionKey, "POST", "/api/v1/promotions/create", request, MAP);
+    }
+
+    public Map<String, Object> updatePromotion(String sessionKey, Object request) {
+        return send(sessionKey, "PUT", "/api/v1/promotions/update", request, MAP);
+    }
+
+    /** Removes promotion + its rule definitions atomically on the API side. Call reloadRules() afterwards. */
+    public Map<String, Object> removePromotion(Integer promotionId, String sessionKey) {
+        return send(sessionKey, "POST", "/api/v1/promotions/" + promotionId + "/remove", null, MAP);
+    }
+
+    // ---------------- system discounts ----------------
+    public String getTimezone(String sessionKey, Integer locationId) {
+        return execute(() -> hltRestClient.get()
+                .uri("/api/v1/locations/{id}/timezone", locationId)
+                .header(SESSION, sessionKey)
+                .retrieve()
+                .body(String.class));
+    }
+
+    public List<Map<String, Object>> getAllSystemDiscounts(String sessionKey) {
+        return get(sessionKey, "/api/v1/system-discounts", LIST);
+    }
+
+    public Map<String, Object> createSystemDiscount(String sessionKey, Object request) {
+        return send(sessionKey, "POST", "/api/v1/system-discounts/create", request, MAP);
+    }
+
+    public Map<String, Object> updateSystemDiscount(String sessionKey, Object request) {
+        return send(sessionKey, "PUT", "/api/v1/system-discounts/update", request, MAP);
+    }
+
+    public Map<String, Object> approveSystemDiscount(String sessionKey, Integer id, String decision, String rejectionReason) {
+        return execute(() -> hltRestClient.put()
+                .uri(b -> b.path("/api/v1/system-discounts/{id}/approve")
+                        .queryParam("decision", decision)
+                        .queryParamIfPresent("rejectionReason", Optional.ofNullable(rejectionReason))
+                        .build(id))
+                .header(SESSION, sessionKey)
+                .retrieve()
+                .body(MAP));
+    }
+
+    public Map<String, Object> removeSystemDiscount(Integer id, String sessionKey) {
+        return send(sessionKey, "POST", "/api/v1/system-discounts/" + id + "/remove", null, MAP);
+    }
+
+    // ---------------- rule definitions ----------------
+    public List<Map<String, Object>> getAllRuleDefinitions(String sessionKey) {
+        return get(sessionKey, "/api/v1/rule-definitions", LIST);
+    }
+
+    public List<Map<String, Object>> getReloadRules(String sessionKey) {
+        return get(sessionKey, "/api/v1/rule-definitions/reload", LIST);
+    }
+
+    public Map<String, Object> createRuleDefinition(Object rule, String sessionKey) {
+        return send(sessionKey, "POST", "/api/v1/rule-definitions/create", rule, MAP);
+    }
+
+    public Map<String, Object> updateRuleDefinition(Object rule, String sessionKey) {
+        return send(sessionKey, "PUT", "/api/v1/rule-definitions/update", rule, MAP);
+    }
+
+    /** Returns an empty map when there is no active rule. */
+    public Map<String, Object> findActiveRule(String ruleType, Long referenceId, String sessionKey) {
+        return get(sessionKey, "/api/v1/rule-definitions/by-reference?ruleType={t}&referenceId={r}", MAP, ruleType, referenceId);
+    }
+
+    public Integer deactivateRuleDefinition(Long ruleDefinitionId, String sessionKey) {
+        Map<String, Object> res = send(sessionKey, "POST",
+                "/api/v1/rule-definitions/" + ruleDefinitionId + "/deactivate", null, MAP);
+        return res != null && res.get("result") != null ? ((Number) res.get("result")).intValue() : null;
+    }
+
+    /**
+     * Standalone remove-by-reference. Only needed when removing a rule definition WITHOUT going
+     * through removePromotion/removeSystemDiscount (those already do it atomically on the API side).
+     */
+    public Integer removeRuleDefinitionByReference(String ruleType, Integer referenceId, String sessionKey) {
+        Map<String, Object> res = execute(() -> hltRestClient.post()
+                .uri(b -> b.path("/api/v1/rule-definitions/remove-by-reference")
+                        .queryParam("ruleType", ruleType)
+                        .queryParam("referenceId", referenceId)
+                        .build())
+                .header(SESSION, sessionKey)
+                .retrieve()
+                .body(MAP));
+        return res != null && res.get("result") != null ? ((Number) res.get("result")).intValue() : null;
+    }
+
+    // ---------------- history / usage / audit ----------------
+    public Map<String, Object> createRuleHistory(Object history, String sessionKey) {
+        return send(sessionKey, "POST", "/api/v1/rule-history", history, MAP);
+    }
+
+    public void usePromo(String sessionKey, String promoCode, Integer customerId,
+                         Integer usageLimit, Integer maxUsagePerCustomer) {
+        Map<String, Object> body = new HashMap<>();
+        body.put("promoCode", promoCode);
+        body.put("customerId", customerId);
+        body.put("usageLimit", usageLimit);
+        body.put("maxUsagePerCustomer", maxUsagePerCustomer);
+        execute(() -> {
+            hltRestClient.post().uri("/api/v1/promo-usage/use")
+                    .header(SESSION, sessionKey)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(body)
+                    .retrieve()
+                    .toBodilessEntity();
+            return null;
+        });
+    }
+
+    /** Keys: totalUsage, customerUsage */
+    public Map<String, Object> getUsageSummary(String sessionKey, String promoCode, Integer customerId) {
+        return get(sessionKey, "/api/v1/promo-usage/summary?promoCode={p}&customerId={c}", MAP, promoCode, customerId);
+    }
+
+    public Map<String, Object> createDiscountAuditLog(Object log, String sessionKey) {
+        return send(sessionKey, "POST", "/api/v1/discount-audit-logs", log, MAP);
+    }
+
+    public List<Map<String, Object>> getAuditLogsByCustomer(String sessionKey, String customerId) {
+        return get(sessionKey, "/api/v1/discount-audit-logs?customerId={c}", LIST, customerId);
+    }
+
+    // ---------------- plumbing ----------------
+    private <T> T get(String sessionKey, String uri, ParameterizedTypeReference<T> type, Object... vars) {
+        return execute(() -> hltRestClient.get()
+                .uri(uri, vars)
+                .header(SESSION, sessionKey)
+                .retrieve()
+                .body(type));
+    }
+
+    private <T> T send(String sessionKey, String method, String uri, Object body, ParameterizedTypeReference<T> type) {
+        return execute(() -> {
+            RestClient.RequestBodySpec spec = hltRestClient.method(HttpMethod.valueOf(method))
+                    .uri(uri)
+                    .header(SESSION, sessionKey)
+                    .contentType(MediaType.APPLICATION_JSON);
+            if (body != null) {
+                spec = spec.body(body);
+            }
+            return spec.retrieve().body(type);
+        });
+    }
+
+    /** Maps API HTTP statuses back to the exception types the promo code already expects. */
+    private <T> T execute(Supplier<T> operation) {
+        try {
+            return operation.get();
+        } catch (RestClientResponseException ex) {
+            int status = ex.getStatusCode().value();
+            String message = extractMessage(ex);
+            log.error("hlt-api returned HTTP {}: {}", status, message);
+            switch (status) {
+                case 400 -> throw new IllegalArgumentException(message);
+                case 401, 403 -> throw new SecurityException(message);
+                case 409 -> throw new PromoLimitExceededException(message);
+                default -> throw new HltApiException("hlt-api request failed with HTTP status " + status, ex);
+            }
+        } catch (ResourceAccessException ex) {
+            log.error("Unable to connect to hlt-api");
+            throw new HltApiException("Unable to connect to hlt-api", ex);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private String extractMessage(RestClientResponseException ex) {
+        try {
+            Map<String, Object> body = ex.getResponseBodyAs(Map.class);
+            if (body != null && body.get("message") != null) {
+                return body.get("message").toString();
+            }
+        } catch (Exception ignored) {
+            // fall through
+        }
+        return ex.getResponseBodyAsString();
+    }
+}
+
+
+package hlt.promo.engine.scheduler;
+
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import hlt.promo.engine.client.AuthClient;
+import hlt.promo.engine.client.PromotionApiClient;
+import hlt.promo.engine.dto.CreatePromotionRequest;
+import hlt.promo.engine.dto.UpdateSystemDiscountRequest;
+import hlt.promo.engine.model.DiscountStatus;
+import hlt.promo.engine.model.Promotion;
+import hlt.promo.engine.model.PromotionStatus;
+import hlt.promo.engine.model.SystemDiscount;
+import hlt.promo.engine.service.DroolsRuleService;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.stereotype.Component;
+
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
+import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
+
+@Slf4j
+@Component
+@RequiredArgsConstructor
+public class DiscountScheduler {
+
+    private final AuthClient authClient;
+    private final PromotionApiClient promotionApiClient;
+    private final DroolsRuleService droolsRuleService;
+
+    private static ObjectMapper mapper() {
+        ObjectMapper m = new ObjectMapper();
+        m.registerModule(new JavaTimeModule());
+        return m;
+    }
+
+    // Every hour - expire promotions past end date.
+    // No @Transactional: all DB work happens remotely in hlt-api.
+    @Scheduled(cron = "0 0 * * * *")
+    public void expirePromotions() {
+        // end dates are stored in UTC (converted from the location timezone on create/update)
+        LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
+        String session = authClient.createSession();
+
+        List<Map<String, Object>> allPromotions = promotionApiClient.getAllPromotions(session);
+        List<Promotion> promotions = mapper().convertValue(allPromotions, new TypeReference<List<Promotion>>() {});
+
+        List<Promotion> expired = promotions.stream()
+                .filter(p -> Boolean.TRUE.equals(p.getActive()))
+                .filter(p -> p.getEndDate() != null && p.getEndDate().isBefore(now))
+                .collect(Collectors.toList());
+
+        for (Promotion p : expired) {
+            try {
+                log.info("Expiring promo: {}", p.getPromoCode());
+
+                CreatePromotionRequest updateReq = new CreatePromotionRequest();
+                updateReq.setSessionKey(session);
+                updateReq.setPromotionId(p.getId());
+                updateReq.setPromoStatus(PromotionStatus.INACTIVE.name());
+                promotionApiClient.updatePromotion(session, updateReq);
+
+                droolsRuleService.deactivateRuleDefinition("PROMOTION", p.getId(), "SYSTEM_APP", session);
+            } catch (Exception e) {
+                // one bad promo must not stop the rest from expiring
+                log.error("Failed to expire promo {}: {}", p.getPromoCode(), e.getMessage(), e);
+            }
+        }
+    }
+
+    // Every hour - expire system discounts past end date
+    @Scheduled(cron = "0 0 * * * *")
+    public void expireSystemDiscounts() {
+        LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
+        String session = authClient.createSession();
+
+        List<Map<String, Object>> allDiscounts = promotionApiClient.getAllSystemDiscounts(session);
+        List<SystemDiscount> discounts = mapper().convertValue(allDiscounts, new TypeReference<List<SystemDiscount>>() {});
+
+        List<SystemDiscount> expired = discounts.stream()
+                .filter(sd -> Boolean.TRUE.equals(sd.getActive()))
+                .filter(sd -> sd.getEndDate() != null && sd.getEndDate().isBefore(now))
+                .collect(Collectors.toList());
+
+        for (SystemDiscount sd : expired) {
+            try {
+                log.info("Expiring discount: {}", sd.getTitle());
+
+                UpdateSystemDiscountRequest updateReq = new UpdateSystemDiscountRequest();
+                updateReq.setSessionKey(session);
+                updateReq.setSystemDiscountId(sd.getId());
+                updateReq.setSystemDiscountStatus(DiscountStatus.INACTIVE.name());
+                promotionApiClient.updateSystemDiscount(session, updateReq);
+
+                droolsRuleService.deactivateRuleDefinition("SYSTEM_DISCOUNT", sd.getId(), "SYSTEM_APP", session);
+            } catch (Exception e) {
+                log.error("Failed to expire discount {}: {}", sd.getTitle(), e.getMessage(), e);
+            }
+        }
+    }
+}
+
+
+package com.hlt.api.promotion.dto;
+
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import lombok.Data;
+
+import java.math.BigDecimal;
+import java.time.LocalDateTime;
+
+/**
+ * ONE request object used by every promotion endpoint / DAO.
+ * Each endpoint only fills the fields it needs; the rest stay null.
+ * Property name -> stored proc parameter is automatic: promoCode -> p_Promo_Code.
+ * Unknown JSON properties (e.g. sessionKey in the body) are ignored.
+ */
+@Data
+@JsonIgnoreProperties(ignoreUnknown = true)
+public class PromoRequest {
+
+    // ---- identifiers ----
+    private Long id;                      // rule definition id
+    private Integer promotionId;
+    private Integer systemDiscountId;
+    private Integer parentSystemDiscountId;
+    private Long referenceId;
+    private Integer customerId;
+
+    // ---- shared promotion / system discount ----
+    private Integer locationId;
+    private Integer amenityId;
+    private BigDecimal amount;
+    private String discountType;
+    private String userType;
+    private Boolean channelPos;
+    private Boolean channelWeb;
+    private LocalDateTime startDate;
+    private LocalDateTime endDate;
+    private Boolean stackable;
+    private String stackGroup;
+    private Integer priority;
+
+    // ---- promotion ----
+    private String promoCode;
+    private String promoStatus;
+    private String redemptionMethod;
+    private Boolean applyFullCart;
+    private String category;
+    private String displayMessage;
+    private String selectionGroup;
+    private Integer maxSelectablePerGroup;
+    private String ticketType;
+    private Integer usageLimit;
+    private Integer maxUsagePerCustomer;
+
+    // ---- system discount ----
+    private String title;
+    private String displayName;
+    private String discountDescription;
+    private Integer minQuantity;
+    private Boolean managerApprovalRequired;
+    private String icon;
+    private String systemDiscountStatus;
+
+    // ---- rule definition / history ----
+    private String ruleName;
+    private String ruleType;
+    private String drlContent;
+    private Integer version;
+    private String action;
+    private String changedBy;
+
+    // ---- audit log ----
+    private String appliedDiscountsJson;
+    private BigDecimal originalTotal;
+    private BigDecimal totalDiscount;
+    private BigDecimal finalTotal;
+    private String promoCodes;
+    private Integer rulesFired;
+}
+
+
+
+
+package com.hlt.api.promotion.dao;
+
+import com.hlt.api.dao.BaseDao;
+import com.hlt.api.promotion.dto.PromoRequest;
+import com.hlt.api.promotion.exception.PromoLimitExceededException;
+import org.springframework.beans.BeanWrapper;
+import org.springframework.beans.PropertyAccessorFactory;
+
+import java.sql.Timestamp;
+import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+
+/**
+ * Promotion-specific DAO base. Reuses BaseDao's call()/jdbcTemplate plumbing but:
+ *  - does NOT reuse BaseDao.validateResultCode() - promo procs use a different
+ *    code convention (-2 session, -3 permission, -4 validation, -5/-6 limits).
+ *  - duplicates BaseDao.convertResponse()'s camelCase/boolean conversion because
+ *    that method is private on BaseDao.
+ *
+ * Request handling: every DAO takes the single PromoRequest DTO and lists the DTO
+ * properties it needs; params() turns them into proc parameters.
+ */
+public abstract class PromotionBaseDao extends BaseDao {
+
+    protected void executeVoid(String procName, Map<String, Object> params) {
+        Map<String, Object> out = call(procName).execute(params);
+        validatePromoResultCode(out, procName);
+    }
+
+    /** For promo procs that declare the id as a plain OUT param (e.g. OUT p_Result_Code INT). */
+    protected Integer executeReturnId(String procName, String outParamName, Map<String, Object> params) {
+        Map<String, Object> out = call(procName).execute(params);
+        validatePromoResultCode(out, procName);
+        Object value = out.get(outParamName);
+        return value != null ? ((Number) value).intValue() : null;
+    }
+
+    protected String executeReturnType(String procName, String outParamName, Map<String, Object> params) {
+        Map<String, Object> out = call(procName).execute(params);
+        validatePromoResultCode(out, procName);
+        Object value = out.get(outParamName);
+        return value != null ? value.toString() : null;
+    }
+
+    protected Map<String, Object> executeSingle(String procName, Map<String, Object> params) {
+        List<Map<String, Object>> rows = executeList(procName, params);
+        return rows.isEmpty() ? null : rows.get(0);
+    }
+
+    @SuppressWarnings("unchecked")
+    protected List<Map<String, Object>> executeList(String procName, Map<String, Object> params) {
+        Map<String, Object> out = call(procName).execute(params);
+        validatePromoResultCode(out, procName);
+        List<Map<String, Object>> rows = (List<Map<String, Object>>) out.get("#result-set-1");
+        if (rows == null) return Collections.emptyList();
+
+        // Timestamp -> LocalDateTime so JSON carries plain ISO strings (no timezone shifting)
+        for (Map<String, Object> row : rows) {
+            row.replaceAll((k, v) -> v instanceof Timestamp ts ? ts.toLocalDateTime() : v);
+        }
+        return convertResponse(rows);
+    }
+
+    // ---------------------------------------------------------------------------------
+    // Request DTO -> proc params
+    // ---------------------------------------------------------------------------------
+
+    /**
+     * Builds proc params straight from the request DTO.
+     *   "promoCode"                 -> p_Promo_Code   (automatic: "p_" + Pascal_Snake)
+     *   "id:p_Rule_Definition_Id"   -> explicit proc param name, for the few that don't follow the pattern
+     * LocalDateTime values are converted to Timestamp. A wrong property name fails fast
+     * with a clear "not readable property" error instead of silently sending null.
+     */
+    protected Map<String, Object> params(String sessionKey, PromoRequest req, String... props) {
+        Map<String, Object> params = new HashMap<>();
+        params.put("p_Session_Key", sessionKey);
+        BeanWrapper bw = PropertyAccessorFactory.forBeanPropertyAccess(req);
+        for (String spec : props) {
+            int i = spec.indexOf(':');
+            String prop = i < 0 ? spec : spec.substring(0, i);
+            String procParam = i < 0 ? toProcParam(prop) : spec.substring(i + 1);
+            Object v = bw.getPropertyValue(prop);
+            if (v instanceof LocalDateTime dt) {
+                v = Timestamp.valueOf(dt);
+            }
+            params.put(procParam, v);
+        }
+        return params;
+    }
+
+    /** Concatenates a base field list with extra fields. */
+    protected static String[] with(String[] base, String... extra) {
+        String[] all = Arrays.copyOf(base, base.length + extra.length);
+        System.arraycopy(extra, 0, all, base.length, extra.length);
+        return all;
+    }
+
+    /** promoCode -> p_Promo_Code */
+    private static String toProcParam(String prop) {
+        StringBuilder sb = new StringBuilder("p_");
+        for (int i = 0; i < prop.length(); i++) {
+            char c = prop.charAt(i);
+            if (i == 0) {
+                sb.append(Character.toUpperCase(c));
+            } else if (Character.isUpperCase(c)) {
+                sb.append('_').append(c);
+            } else {
+                sb.append(c);
+            }
+        }
+        return sb.toString();
+    }
+
+    /** Promo proc result-code convention - do NOT merge into BaseDao.validateResultCode(). */
+    protected void validatePromoResultCode(Map<String, Object> out, String procName) {
+        Object raw = out.get("p_Result_Code");
+        int code = raw != null ? ((Number) raw).intValue() : 0;
+        switch (code) {
+            case 1:
+                return;
+            case -2:
+                throw new SecurityException("Invalid session in " + procName);
+            case -3:
+                throw new SecurityException("Permission denied in " + procName);
+            case -4:
+                throw new IllegalArgumentException("Validation failed in " + procName);
+            case -5:
+                throw new PromoLimitExceededException("Promo usage limit reached (global)");
+            case -6:
+                throw new PromoLimitExceededException("Promo usage limit reached (per customer)");
+            default:
+                throw new RuntimeException("DB Error (" + code + ") in " + procName);
+        }
+    }
+
+    // ---- duplicated from BaseDao (private there) - keeps key casing/boolean conversion identical ----
+
+    private List<Map<String, Object>> convertResponse(List<Map<String, Object>> rows) {
+        if (rows == null) return Collections.emptyList();
+        List<Map<String, Object>> response = new ArrayList<>();
+        for (Map<String, Object> row : rows) {
+            Map<String, Object> map = new LinkedHashMap<>();
+            for (Map.Entry<String, Object> entry : row.entrySet()) {
+                String key = toCamelCase(entry.getKey());
+                Object value = entry.getValue();
+                // Convert 0/1 to boolean
+                if (value instanceof Number && key.startsWith("is")) {
+                    value = ((Number) value).intValue() == 1;
+                }
+                map.put(key, value);
+            }
+            response.add(map);
+        }
+        return response;
+    }
+
+    private String toCamelCase(String value) {
+        StringBuilder builder = new StringBuilder();
+        boolean upper = false;
+        for (char c : value.toCharArray()) {
+            if (c == '_') {
+                upper = true;
+                continue;
+            }
+            if (builder.length() == 0) {
+                builder.append(Character.toLowerCase(c));
+            } else if (upper) {
+                builder.append(Character.toUpperCase(c));
+                upper = false;
+            } else {
+                builder.append(Character.toLowerCase(c));
+            }
+        }
+        return builder.toString();
+    }
+}
+
+
+
+package com.hlt.api.promotion.dao;
+
+import com.hlt.api.promotion.dto.PromoRequest;
+import org.springframework.stereotype.Repository;
+
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+@Repository
+public class PromotionDao extends PromotionBaseDao {
+
+    private static final String[] CREATE_FIELDS = {
+            "locationId", "amenityId", "amount", "applyFullCart", "category",
+            "channelPos", "channelWeb", "discountType", "displayMessage",
+            "endDate", "maxSelectablePerGroup", "priority", "promoCode",
+            "redemptionMethod", "selectionGroup", "stackGroup", "stackable",
+            "startDate", "promoStatus", "ticketType", "usageLimit",
+            "userType", "maxUsagePerCustomer"
+    };
+    private static final String[] UPDATE_FIELDS = with(CREATE_FIELDS, "promotionId");
+
+    public Map<String, Object> createPromotion(PromoRequest req, String sessionKey) {
+        return executeSingle("usp_Create_Promotion", params(sessionKey, req, CREATE_FIELDS));
+    }
+
+    public Map<String, Object> updatePromotion(PromoRequest req, String sessionKey) {
+        return executeSingle("usp_Update_Promotion", params(sessionKey, req, UPDATE_FIELDS));
     }
 
     public List<Map<String, Object>> getAllPromotions(String sessionKey) {
@@ -30,6 +651,7 @@ public Map<String, Object> createPromotion(Map<String, Object> body, String sess
 
 package com.hlt.api.promotion.dao;
 
+import com.hlt.api.promotion.dto.PromoRequest;
 import org.springframework.stereotype.Repository;
 
 import java.util.HashMap;
@@ -37,22 +659,15 @@ import java.util.List;
 import java.util.Map;
 
 @Repository
-public class SystemDiscountDao extends PromoEngineBaseDao {
+public class SystemDiscountDao extends PromotionBaseDao {
 
-    // JSON key = proc param name with "p_" stripped
-    private static final String[][] FIELDS = {
-            {"p_Parent_System_Discount_Id", "Parent_System_Discount_Id"},
-            {"p_Location_Id", "Location_Id"}, {"p_Amenity_Id", "Amenity_Id"},
-            {"p_Title", "Title"}, {"p_Display_Name", "Display_Name"},
-            {"p_Discount_Description", "Discount_Description"},
-            {"p_Discount_Type", "Discount_Type"}, {"p_Amount", "Amount"},
-            {"p_Min_Quantity", "Min_Quantity"}, {"p_User_Type", "User_Type"},
-            {"p_Channel_POS", "Channel_POS"}, {"p_Channel_Web", "Channel_Web"},
-            {"p_Start_Date", "Start_Date"}, {"p_End_Date", "End_Date"},
-            {"p_Stackable", "Stackable"}, {"p_Stack_Group", "Stack_Group"},
-            {"p_Priority", "Priority"}, {"p_Manager_Approval_Required", "Manager_Approval_Required"},
-            {"p_Icon", "Icon"}, {"p_System_Discount_Status", "System_Discount_Status"}
+    private static final String[] CREATE_FIELDS = {
+            "parentSystemDiscountId", "locationId", "amenityId", "title", "displayName",
+            "discountDescription", "discountType", "amount", "minQuantity", "userType",
+            "channelPos", "channelWeb", "startDate", "endDate", "stackable", "stackGroup",
+            "priority", "managerApprovalRequired", "icon", "systemDiscountStatus"
     };
+    private static final String[] UPDATE_FIELDS = with(CREATE_FIELDS, "systemDiscountId");
 
     public String getTimezoneByLocation(String sessionKey, Integer locationId) {
         Map<String, Object> params = new HashMap<>();
@@ -61,29 +676,29 @@ public class SystemDiscountDao extends PromoEngineBaseDao {
         return executeReturnType("usp_Get_Timezone_By_Location", "p_Timezone", params);
     }
 
-    public Map<String, Object> createSystemDiscount(Map<String, Object> body, String sessionKey) {
-        return executeSingle("usp_Create_System_Discount", buildParams(sessionKey, body, FIELDS));
+    public Map<String, Object> createSystemDiscount(PromoRequest req, String sessionKey) {
+        return executeSingle("usp_Create_System_Discount", params(sessionKey, req, CREATE_FIELDS));
     }
 
-    public Map<String, Object> updateSystemDiscount(Map<String, Object> body, String sessionKey) {
-        Map<String, Object> params = buildParams(sessionKey, body, FIELDS);
-        params.put("p_System_Discount_Id", body.get("System_Discount_Id"));
-        return executeSingle("usp_Update_System_Discount", params);
+    public Map<String, Object> updateSystemDiscount(PromoRequest req, String sessionKey) {
+        return executeSingle("usp_Update_System_Discount", params(sessionKey, req, UPDATE_FIELDS));
     }
 
     public List<Map<String, Object>> getAllSystemDiscounts(String sessionKey) {
         return executeList("usp_Get_System_Discounts", Map.of("p_Session_Key", sessionKey));
     }
 
+    // ASSUMPTION: proc name / param names not seen in screenshots - verify against your DB
     public Map<String, Object> approveSystemDiscount(String sessionKey, Integer id, String decision, String rejectionReason) {
         Map<String, Object> params = new HashMap<>();
         params.put("p_Session_Key", sessionKey);
         params.put("p_System_Discount_Id", id);
-        params.put("p_Approval_Decision", decision);
+        params.put("p_Decision", decision);
         params.put("p_Rejection_Reason", rejectionReason);
         return executeSingle("usp_Approve_System_Discount", params);
     }
 
+    // ASSUMPTION: proc name / param names not seen in screenshots - verify against your DB
     public Integer removeSystemDiscount(Integer systemDiscountId, String sessionKey) {
         Map<String, Object> params = new HashMap<>();
         params.put("p_Session_Key", sessionKey);
@@ -96,6 +711,7 @@ public class SystemDiscountDao extends PromoEngineBaseDao {
 
 package com.hlt.api.promotion.dao;
 
+import com.hlt.api.promotion.dto.PromoRequest;
 import org.springframework.stereotype.Repository;
 
 import java.util.HashMap;
@@ -103,7 +719,7 @@ import java.util.List;
 import java.util.Map;
 
 @Repository
-public class RuleDefinitionDao extends PromoEngineBaseDao {
+public class RuleDefinitionDao extends PromotionBaseDao {
 
     public List<Map<String, Object>> getAllRuleDefinitions(String sessionKey) {
         return executeList("usp_Get_Rule_Definitions", Map.of("p_Session_Key", sessionKey));
@@ -113,26 +729,17 @@ public class RuleDefinitionDao extends PromoEngineBaseDao {
         return executeList("usp_Get_Reload_Rules", Map.of("p_Session_Key", sessionKey));
     }
 
-    // JSON key = proc param name with "p_" stripped (confirmed via debugger: Reference_Id, Rule_Name, Rule_Type, DRL_Content)
-    public Map<String, Object> createRuleDefinition(Map<String, Object> body, String sessionKey) {
-        Map<String, Object> params = new HashMap<>();
-        params.put("p_Session_Key", sessionKey);
-        params.put("p_Reference_Id", body.get("Reference_Id"));
-        params.put("p_Rule_Name", body.get("Rule_Name"));
-        params.put("p_Rule_Type", body.get("Rule_Type"));
-        params.put("p_DRL_Content", body.get("DRL_Content"));
-        return executeSingle("usp_Create_Rule_Definition", params);
+    private static final String[] CREATE_FIELDS = {
+            "referenceId", "ruleName", "ruleType", "drlContent:p_DRL_Content"
+    };
+    private static final String[] UPDATE_FIELDS = with(CREATE_FIELDS, "id:p_Rule_Definition_Id");
+
+    public Map<String, Object> createRuleDefinition(PromoRequest req, String sessionKey) {
+        return executeSingle("usp_Create_Rule_Definition", params(sessionKey, req, CREATE_FIELDS));
     }
 
-    public Map<String, Object> updateRuleDefinition(Map<String, Object> body, String sessionKey) {
-        Map<String, Object> params = new HashMap<>();
-        params.put("p_Session_Key", sessionKey);
-        params.put("p_Rule_Definition_Id", body.get("Rule_Definition_Id"));
-        params.put("p_Reference_Id", body.get("Reference_Id"));
-        params.put("p_Rule_Name", body.get("Rule_Name"));
-        params.put("p_Rule_Type", body.get("Rule_Type"));
-        params.put("p_DRL_Content", body.get("DRL_Content"));
-        return executeSingle("usp_Update_Rule_Definition", params);
+    public Map<String, Object> updateRuleDefinition(PromoRequest req, String sessionKey) {
+        return executeSingle("usp_Update_Rule_Definition", params(sessionKey, req, UPDATE_FIELDS));
     }
 
     public Map<String, Object> findByRuleTypeAndReferenceIdAndActiveTrue(String ruleType, Long referenceId, String sessionKey) {
@@ -160,28 +767,24 @@ public class RuleDefinitionDao extends PromoEngineBaseDao {
 }
 
 
+
 package com.hlt.api.promotion.dao;
 
+import com.hlt.api.promotion.dto.PromoRequest;
 import org.springframework.stereotype.Repository;
 
-import java.util.HashMap;
 import java.util.Map;
 
 @Repository
-public class RuleHistoryDao extends PromoEngineBaseDao {
+public class RuleHistoryDao extends PromotionBaseDao {
 
-    // JSON key = proc param name with "p_" stripped
-    public Map<String, Object> createRuleHistory(Map<String, Object> body, String sessionKey) {
-        Map<String, Object> params = new HashMap<>();
-        params.put("p_Session_Key", sessionKey);
-        params.put("p_Rule_Name", body.get("Rule_Name"));
-        params.put("p_Rule_Type", body.get("Rule_Type"));
-        params.put("p_Reference_Id", body.get("Reference_Id"));
-        params.put("p_DRL_Content", body.get("DRL_Content"));
-        params.put("p_Version", body.get("Version"));
-        params.put("p_Action_Taken", body.get("Action_Taken"));
-        params.put("p_Changed_By", body.get("Changed_By"));
-        return executeSingle("usp_Create_Rule_History", params);
+    private static final String[] FIELDS = {
+            "ruleName", "ruleType", "referenceId", "drlContent:p_DRL_Content",
+            "version", "action:p_Action_Taken", "changedBy"
+    };
+
+    public Map<String, Object> createRuleHistory(PromoRequest req, String sessionKey) {
+        return executeSingle("usp_Create_Rule_History", params(sessionKey, req, FIELDS));
     }
 }
 
@@ -189,6 +792,7 @@ public class RuleHistoryDao extends PromoEngineBaseDao {
 
 package com.hlt.api.promotion.dao;
 
+import com.hlt.api.promotion.dto.PromoRequest;
 import org.springframework.stereotype.Repository;
 
 import java.util.HashMap;
@@ -196,21 +800,18 @@ import java.util.List;
 import java.util.Map;
 
 @Repository
-public class DiscountAuditLogDao extends PromoEngineBaseDao {
+public class DiscountAuditLogDao extends PromotionBaseDao {
 
-    // JSON key = proc param name with "p_" stripped
-    public Map<String, Object> createDiscountAuditLog(Map<String, Object> body, String sessionKey) {
-        Map<String, Object> params = new HashMap<>();
-        params.put("p_Session_Key", sessionKey);
-        params.put("p_Customer_Id", body.get("Customer_Id"));
-        params.put("p_Applied_Discount_JSON", body.get("Applied_Discount_JSON"));
-        params.put("p_Original_Total", body.get("Original_Total"));
-        params.put("p_Total_Disocunt", body.get("Total_Disocunt")); // matches the existing proc's spelling
-        params.put("p_Final_Total", body.get("Final_Total"));
-        params.put("p_Promo_Codes", body.get("Promo_Codes"));
-        params.put("p_Rules_Fired", body.get("Rules_Fired"));
-        params.put("p_Manager_Approval_Required", body.get("Manager_Approval_Required"));
-        return executeSingle("usp_Create_Discount_Audit_Log", params);
+    private static final String[] FIELDS = {
+            "customerId",
+            "appliedDiscountsJson:p_Applied_Discount_JSON",
+            "originalTotal",
+            "totalDiscount:p_Total_Disocunt",   // spelling matches the existing proc parameter
+            "finalTotal", "promoCodes", "rulesFired", "managerApprovalRequired"
+    };
+
+    public Map<String, Object> createDiscountAuditLog(PromoRequest req, String sessionKey) {
+        return executeSingle("usp_Create_Discount_Audit_Log", params(sessionKey, req, FIELDS));
     }
 
     public List<Map<String, Object>> getAuditLogsByCustomer(String sessionKey, String customerId) {
@@ -223,38 +824,5 @@ public class DiscountAuditLogDao extends PromoEngineBaseDao {
 
 
 
-package com.hlt.api.promotion.dao;
 
-import org.springframework.stereotype.Repository;
 
-import java.util.HashMap;
-import java.util.Map;
-
-@Repository
-public class PromoUsageDao extends PromoEngineBaseDao {
-
-    // usePromo/getUsageSummary take explicit scalar args already, not a body map, so no key-casing risk here.
-    public void usePromo(String sessionKey, String promoCode, Integer customerId,
-                         Integer usageLimit, Integer maxUsagePerCustomer) {
-        Map<String, Object> params = new HashMap<>();
-        params.put("p_Session_Key", sessionKey);
-        params.put("p_Promo_Code", promoCode);
-        params.put("p_Customer_Id", customerId);
-        params.put("p_Usage_Limit", usageLimit);
-        params.put("p_Max_Usage_Per_Customer", maxUsagePerCustomer);
-        executeVoid("usp_Use_Promo", params);
-    }
-
-    public Map<String, Object> getUsageSummary(String promoCode, Integer customerId) {
-        Map<String, Object> params = new HashMap<>();
-        params.put("p_Promo_Code", promoCode);
-        params.put("p_Customer_Id", customerId);
-        Map<String, Object> out = call("usp_Get_Promo_Usage_Summary").execute(params);
-        validatePromoResultCode(out, "usp_Get_Promo_Usage_Summary");
-
-        Map<String, Object> result = new HashMap<>();
-        result.put("totalUsage", ((Number) out.get("p_Total_Usage")).intValue());
-        result.put("customerUsage", ((Number) out.get("p_Customer_Usage")).intValue());
-        return result;
-    }
-}
