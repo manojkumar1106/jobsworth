@@ -1,22 +1,13 @@
-@Transactional
-public SystemDiscount approveSystemDiscount(String sessionKey, Integer id, String decision, String rejectionReason) {
-
-    Map<String, Object> row = promotionApiClient.approveSystemDiscount(sessionKey, id, decision, rejectionReason);
-
-    ObjectMapper objectMapper = new ObjectMapper();
-    objectMapper.registerModule(new JavaTimeModule());
-    SystemDiscount sdObj = objectMapper.convertValue(row, SystemDiscount.class);
-
-    // convertValue can't match Pascal_Snake_Case DB keys to camelCase fields -
-    // pull the values generateSystemDiscountRule actually needs straight off the raw row.
-    sdObj.setId(((Number) row.get("System_Discount_Id")).longValue());
-    sdObj.setTitle((String) row.get("Title"));
-    if (row.get("Stack_Group") != null) sdObj.setStackGroup((String) row.get("Stack_Group"));
-
-    log.info("System discount {} for id={}", decision, id);
-
-    if ("APPROVED".equals(decision)) {
-        droolsRuleService.generateSystemDiscountRule(sdObj, "ADMIN", sessionKey);
-    }
-    return sdObj;
-}
+private static final String[][] FIELDS = {
+            {"p_Location_Id", "Location_Id"}, {"p_Amenity_Id", "Amenity_Id"}, {"p_Amount", "Amount"},
+            {"p_Apply_Full_Cart", "Apply_Full_Cart"}, {"p_Category", "Category"},
+            {"p_Channel_POS", "Channel_POS"}, {"p_Channel_Web", "Channel_Web"},
+            {"p_Discount_Type", "Discount_Type"}, {"p_Display_Message", "Display_Message"},
+            {"p_End_Date", "End_Date"}, {"p_Max_Selectable_Per_Group", "Max_Selectable_Per_Group"},
+            {"p_Priority", "Priority"}, {"p_Promo_Code", "Promo_Code"},
+            {"p_Redemption_Method", "Redemption_Method"}, {"p_Selection_Group", "Selection_Group"},
+            {"p_Stack_Group", "Stack_Group"}, {"p_Stackable", "Stackable"},
+            {"p_Start_Date", "Start_Date"}, {"p_Promo_Status", "Promo_Status"},
+            {"p_Ticket_Type", "Ticket_Type"}, {"p_Usage_Limit", "Usage_Limit"},
+            {"p_User_Type", "User_Type"}, {"p_Max_Usage_Per_Customer", "Max_Usage_Per_Customer"}
+    };
