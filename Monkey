@@ -1,10 +1,13 @@
-List<RuleDefinition> activeRules = ruleDefinitionList.stream()
-        .filter(RuleDefinition::isActive)
-        .filter(r -> {
-            boolean ok = r.getRuleName() != null
-                    && r.getDrlContent() != null && !r.getDrlContent().isBlank();
-            if (!ok) log.warn("Skipping rule id={} name={} - empty DRL/name, regenerate it",
-                    r.getId(), r.getRuleName());
-            return ok;
-        })
-        .collect(Collectors.toList());
+Map<String, Object> promotion = promotionApiClient.updatePromotion(request.getSessionKey(), request);
+
+if (promotion == null || promotion.isEmpty()) {
+    // the update proc returned no row - read the promotion back
+    promotion = promotionApiClient.getPromotionByCode(request.getSessionKey(), request.getPromoCode());
+}
+if (promotion == null || promotion.isEmpty()) {
+    throw new ValidationException("Promotion not found after update, id=" + request.getPromotionId());
+}
+
+ObjectMapper objectMapper = new ObjectMapper();
+objectMapper.registerModule(new JavaTimeModule());
+Promotion promotionObj = objectMapper.convertValue(promotion, Promotion.class);
