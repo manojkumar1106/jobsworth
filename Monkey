@@ -1,89 +1,19 @@
- Map<String, Object> removePromotion(Integer promotionId, String sessionKey);
+@Transactional
+public ApiResponse<String> removePromotion(Integer promotionId, String sessionKey) {
 
+    Map<String, Object> promoResponse = promoEngineApiClient.removePromotion(promotionId, sessionKey);
+    Integer promoResult = promoResponse != null && promoResponse.get("result") != null
+            ? ((Number) promoResponse.get("result")).intValue() : null;
 
-Map<String, Object> removeSystemDiscount(Integer id, String sessionKey);
-Integer removeRuleDefinitionByReference(String ruleType, Integer referenceId, String sessionKey);
-
-  @Override
-    @Transactional
-    public Map<String, Object> removePromotion(Integer promotionId, String sk) {
-        Integer promoResult = promotionDao.removePromotion(promotionId, sk);
-        if (promoResult == null || promoResult == 0) {
-            throw new IllegalArgumentException("Promotion not found for id=" + promotionId);
-        }
-        Integer ruleResult = ruleDefinitionDao.removeRuleDefinitionByReference("PROMOTION", promotionId, sk);
-        return removeResult(promoResult, ruleResult);
+    if (promoResult == null || promoResult == 0) {
+        throw new IllegalArgumentException("Promotion not found for id=" + promotionId);
     }
 
+    Integer ruleResult = promoEngineApiClient.removeRuleDefinitionByReference("PROMOTION", promotionId, sessionKey);
+    log.info("Promotion {} removed. Rule rows affected: {}", promotionId, ruleResult);
 
-   @Override
-    @Transactional
-    public Map<String, Object> removeSystemDiscount(Integer id, String sk) {
-        Integer sdResult = systemDiscountDao.removeSystemDiscount(id, sk);
-        if (sdResult == null || sdResult == 0) {
-            throw new IllegalArgumentException("System discount not found for id=" + id);
-        }
-        Integer ruleResult = ruleDefinitionDao.removeRuleDefinitionByReference("SYSTEM_DISCOUNT", id, sk);
-        return removeResult(sdResult, ruleResult);
-    }
+    droolsEngineService.reloadRules();
+    log.info("Rules reloaded after removing promotion id={}", promotionId);
 
-  @Override
-    @Transactional
-    public Integer removeRuleDefinitionByReference(String ruleType, Integer referenceId, String sk) {
-        return ruleDefinitionDao.removeRuleDefinitionByReference(ruleType, referenceId, sk);
-    }
-
-
-   @PostMapping("/{id}/remove")
-    public ResponseEntity<Map<String, Object>> remove(@RequestHeader("X-Session-Key") String sessionKey,
-                                                      @PathVariable Integer id) {
-        return ResponseEntity.ok(service.removePromotion(id, sessionKey));
-    }
+    return ApiResponse.success("Promotion removed", null);
 }
-
-
-    @PostMapping("/{id}/remove")
-    public ResponseEntity<Map<String, Object>> remove(@RequestHeader("X-Session-Key") String sessionKey,
-                                                      @PathVariable Integer id) {
-        return ResponseEntity.ok(service.removeSystemDiscount(id, sessionKey));
-    }
-
-
-  @PostMapping("/remove-by-reference")
-    public ResponseEntity<Map<String, Object>> removeByReference(@RequestHeader("X-Session-Key") String sessionKey,
-                                                                 @RequestParam String ruleType,
-                                                                 @RequestParam Integer referenceId) {
-        Map<String, Object> res = new HashMap<>();
-        res.put("result", service.removeRuleDefinitionByReference(ruleType, referenceId, sessionKey));
-        return ResponseEntity.ok(res);
-    }
-
-
-
-reloadRules() afterwards. */
-public Map<String, Object> removePromotion(Integer promotionId, String sessionKey) {
-    return send(sessionKey, "POST", "/api/v1/promotions/" + promotionId + "/remove", null, MAP);
-}
-
-/** Removes system discount + its rule definitions atomically on the API side. Call reloadRules() afterwards. */
-public Map<String, Object> removeSystemDiscount(Integer id, String sessionKey) {
-    return send(sessionKey, "POST", "/api/v1/system-discounts/" + id + "/remove", null, MAP);
-}
-
-/**
- * Standalone remove-by-reference. Only needed if you're removing a rule definition
- * WITHOUT going through removePromotion/removeSystemDiscount (those already do this
- * internally as part of their own atomic remove).
- */
-public Integer removeRuleDefinitionByReference(String ruleType, Integer referenceId, String sessionKey) {
-    Map<String, Object> res = execute(() -> hltRestClient.method(HttpMethod.POST)
-            .uri(b -> b.path("/api/v1/rule-definitions/remove-by-reference")
-                    .queryParam("ruleType", ruleType)
-                    .queryParam("referenceId", referenceId)
-                    .build())
-            .header(SESSION, sessionKey)
-            .retrieve()
-            .body(MAP));
-    return res != null && res.get("result") != null ? ((Number) res.get("result")).intValue() : null;
-}
-
