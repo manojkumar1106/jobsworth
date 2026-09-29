@@ -1,110 +1,22 @@
-package hlt.promo.engine.scheduler;
+@Transactional
+public SystemDiscount approveSystemDiscount(String sessionKey, Integer id, String decision, String rejectionReason) {
 
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
-import hlt.promo.engine.client.AuthClient;
-import hlt.promo.engine.client.PromoEngineApiClient;
-import hlt.promo.engine.dto.CreatePromotionRequest;
-import hlt.promo.engine.dto.UpdateSystemDiscountRequest;
-import hlt.promo.engine.model.DiscountStatus;
-import hlt.promo.engine.model.Promotion;
-import hlt.promo.engine.model.PromotionStatus;
-import hlt.promo.engine.model.SystemDiscount;
-import hlt.promo.engine.service.DroolsRuleService;
-import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
-import org.springframework.scheduling.annotation.Scheduled;
-import org.springframework.stereotype.Component;
-import org.springframework.transaction.annotation.Transactional;
+    Map<String, Object> row = promotionApiClient.approveSystemDiscount(sessionKey, id, decision, rejectionReason);
 
-import java.time.LocalDateTime;
-import java.util.List;
-import java.util.Map;
-import java.util.stream.Collectors;
+    ObjectMapper objectMapper = new ObjectMapper();
+    objectMapper.registerModule(new JavaTimeModule());
+    SystemDiscount sdObj = objectMapper.convertValue(row, SystemDiscount.class);
 
-@Slf4j
-@Component
-@RequiredArgsConstructor
-public class DiscountScheduler {
+    // convertValue can't match Pascal_Snake_Case DB keys to camelCase fields -
+    // pull the values generateSystemDiscountRule actually needs straight off the raw row.
+    sdObj.setId(((Number) row.get("System_Discount_Id")).longValue());
+    sdObj.setTitle((String) row.get("Title"));
+    if (row.get("Stack_Group") != null) sdObj.setStackGroup((String) row.get("Stack_Group"));
 
-    private final AuthClient authClient;
-    private final PromoEngineApiClient promoEngineApiClient;
-    private final DroolsRuleService droolsRuleService;
+    log.info("System discount {} for id={}", decision, id);
 
-    // ==========================
-    // Every hour - expire promotions past end date
-    // ==========================
-    @Scheduled(cron = "0 0 * * * *")
-    @Transactional
-    public void expirePromotions() {
-        LocalDateTime now = LocalDateTime.now();
-        String session = authClient.createSession();
-
-        List<Map<String, Object>> allPromotions = promoEngineApiClient.getAllPromotions(session);
-
-        ObjectMapper objectMapper = new ObjectMapper();
-        objectMapper.registerModule(new JavaTimeModule());
-        List<Promotion> promotions = objectMapper.convertValue(
-                allPromotions, new TypeReference<List<Promotion>>() {});
-
-        List<Promotion> expired = promotions.stream()
-                .filter(Promotion::getActive)
-                .filter(p -> p.getEndDate() != null && p.getEndDate().isBefore(now))
-                .collect(Collectors.toList());
-
-        if (!expired.isEmpty()) {
-            expired.forEach(p -> {
-                p.setActive(false);
-                p.setStatus(PromotionStatus.INACTIVE);
-                log.info("Expiring promo: {}", p.getPromoCode());
-
-                CreatePromotionRequest updateReq = new CreatePromotionRequest();
-                updateReq.setSessionKey(session);
-                updateReq.setPromotionId(p.getId());
-                updateReq.setPromoStatus(PromotionStatus.INACTIVE.name());
-                promoEngineApiClient.updatePromotion(session, updateReq);
-
-                droolsRuleService.deactivateRuleDefinition("PROMOTION", p.getId(), "SYSTEM_APP", session);
-            });
-        }
+    if ("APPROVED".equals(decision)) {
+        droolsRuleService.generateSystemDiscountRule(sdObj, "ADMIN", sessionKey);
     }
-
-    // ==========================
-    // Every hour - expire system discounts past end date
-    // ==========================
-    @Scheduled(cron = "0 0 * * * *")
-    @Transactional
-    public void expireSystemDiscounts() {
-        LocalDateTime now = LocalDateTime.now();
-        String session = authClient.createSession();
-
-        List<Map<String, Object>> allDiscounts = promoEngineApiClient.getAllSystemDiscounts(session);
-
-        ObjectMapper objectMapper = new ObjectMapper();
-        objectMapper.registerModule(new JavaTimeModule());
-        List<SystemDiscount> discounts = objectMapper.convertValue(
-                allDiscounts, new TypeReference<List<SystemDiscount>>() {});
-
-        List<SystemDiscount> expired = discounts.stream()
-                .filter(SystemDiscount::getActive)
-                .filter(sd -> sd.getEndDate() != null && sd.getEndDate().isBefore(now))
-                .collect(Collectors.toList());
-
-        if (!expired.isEmpty()) {
-            expired.forEach(sd -> {
-                sd.setActive(false);
-                sd.setStatus(DiscountStatus.INACTIVE);
-                log.info("Expiring discount: {}", sd.getTitle());
-
-                UpdateSystemDiscountRequest updateReq = new UpdateSystemDiscountRequest();
-                updateReq.setSessionKey(session);
-                updateReq.setSystemDiscountId(sd.getId());
-                updateReq.setSystemDiscountStatus(DiscountStatus.INACTIVE.name());
-                promoEngineApiClient.updateSystemDiscount(session, updateReq);
-
-                droolsRuleService.deactivateRuleDefinition("SYSTEM_DISCOUNT", sd.getId(), "SYSTEM_APP", session);
-            });
-        }
-    }
+    return sdObj;
 }
