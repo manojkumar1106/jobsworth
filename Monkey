@@ -1,13 +1,69 @@
-Map<String, Object> promotion = promotionApiClient.updatePromotion(request.getSessionKey(), request);
-
-if (promotion == null || promotion.isEmpty()) {
-    // the update proc returned no row - read the promotion back
-    promotion = promotionApiClient.getPromotionByCode(request.getSessionKey(), request.getPromoCode());
+// AmenityPriceTypeController.java
+@Operation(summary = "Get Default Price Type")
+@PostMapping("/get-default")
+public ApiResponse<List<Map<String, Object>>> getDefaultPriceType(@RequestBody TicketRequest req, @AuthenticationPrincipal Jwt jwt) {
+    if (jwt != null) {
+        req.setSessionKey(jwt.getClaims().get("origin_jti").toString());
+    }
+    List<Map<String, Object>> priceTypes = amenityPriceTypeService.getDefaultPriceType(req);
+    return ApiResponse.success("Default Price Types Retrieved", priceTypes);
 }
-if (promotion == null || promotion.isEmpty()) {
-    throw new ValidationException("Promotion not found after update, id=" + request.getPromotionId());
+
+// IAmenityPriceTypeService.java
+List<Map<String, Object>> getDefaultPriceType(TicketRequest req);
+
+
+// AmenityPriceTypeService.java
+@Override
+public List<Map<String, Object>> getDefaultPriceType(TicketRequest req) {
+    log.info("Getting Default Price Types");
+    List<Map<String, Object>> rows = amenityPriceTypeDao.getDefaultPriceType(req);
+
+    List<Map<String, Object>> priceTypes = new ArrayList<>();
+    if (rows != null) {
+        for (Map<String, Object> row : rows) {
+            Map<String, Object> priceType = new HashMap<>();
+            priceType.put("priceTypeId", row.get("Price_Type_Id"));
+            priceType.put("priceTypeName", row.get("Price_Type_Name"));
+            priceTypes.add(priceType);
+        }
+    }
+
+    Map<String, Object> result = new HashMap<>();
+    result.put("priceTypes", priceTypes);
+    return List.of(result);
 }
 
-ObjectMapper objectMapper = new ObjectMapper();
-objectMapper.registerModule(new JavaTimeModule());
-Promotion promotionObj = objectMapper.convertValue(promotion, Promotion.class);
+
+// AmenityPriceTypeDao.java
+public List<Map<String, Object>> getDefaultPriceType(TicketRequest req) {
+    Map<String, Object> params = new HashMap<>();
+    params.put("p_Session_Key", req.getSessionKey());
+    return executeList("usp_Get_Default_Price_Type", params);
+}
+
+
+
+// priceTypeService.ts
+export async function getDefaultPriceType(request: any, context: any) {
+  return await callPriceTypeData("POST", "/get-default", request, context);
+}
+
+
+
+// typeDefs.ts
+type Query {
+  getDefaultPriceType: SessionResponse
+}
+
+
+// resolvers.ts
+import { getDefaultPriceType } from "../../service/pricetypes/priceTypeService";
+
+Query: {
+  getDefaultPriceType: async (_: any, __: any, ctx: any) => {
+    ctx.logger.info("Get Default Price Type");
+    return await getDefaultPriceType({}, ctx);
+  },
+},
+
