@@ -28,3 +28,42 @@ public Map<String, Object> createAmenityPriceType(TicketRequest req) {
     }
     return Map.of("resultCode", code);
 }
+
+
+
+export const priceTypeTypeDefs = `
+  input AmenityPriceTypeItem {
+    amenityPriceTypeName: String!
+    amenityBasePrice: Float!
+  }
+
+  input CreateAmenityPriceType {
+    amenityId: Int!
+    priceTypes: [AmenityPriceTypeItem!]!
+  }
+
+  input UpdateAmenityPriceType {
+    amenityPriceTypeId: Int!
+    amenityPriceTypeName: String!
+    amenityBasePrice: Float!
+  }
+
+  input DeleteAmenityPriceType {
+    amenityPriceTypeId: Int!
+  }
+
+  input GetAmenityPricing {
+    amenityId: Int!
+  }
+
+  type Mutation {
+    createAmenityPriceType(request: CreateAmenityPriceType): SessionResponse
+    updateAmenityPriceType(request: UpdateAmenityPriceType): SessionResponse
+    deleteAmenityPriceType(request: DeleteAmenityPriceType): SessionResponse
+  }
+
+  type Query {
+    getAmenityPricing(request: GetAmenityPricing): SessionResponse
+    getDefaultPriceType: SessionResponse
+  }
+`;
