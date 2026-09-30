@@ -1,28 +1,67 @@
-private List<AmenityPriceTypeItem> priceTypes;
+void createAmenityPriceType(TicketRequest req);
+void updateAmenityPriceType(TicketRequest req);
 
-public static class AmenityPriceTypeItem {
-    private String amenityPriceTypeName;
-    private java.math.BigDecimal amenityBasePrice;
-
-    public String getAmenityPriceTypeName() { return amenityPriceTypeName; }
-    public void setAmenityPriceTypeName(String v) { this.amenityPriceTypeName = v; }
-    public java.math.BigDecimal getAmenityBasePrice() { return amenityBasePrice; }
-    public void setAmenityBasePrice(java.math.BigDecimal v) { this.amenityBasePrice = v; }
-}
-
-
-@Override
-public Integer createAmenityPriceType(TicketRequest req) {
-    List<TicketRequest.AmenityPriceTypeItem> list = req.getPriceTypes();
-
+private String buildPriceTypeList(List<AmenityPriceTypeItem> list) {
     if (list == null || list.isEmpty() || list.size() > 15) {
         throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Provide 1 to 15 price types");
     }
-
-    String priceTypeList = list.stream()
+    String result = list.stream()
         .map(p -> p.getAmenityPriceTypeName().replaceAll("[,|]", "").trim()
                 + "," + p.getAmenityBasePrice().setScale(2, RoundingMode.HALF_UP).toPlainString())
         .collect(Collectors.joining("|"));
+    if (result.length() > 1000) {
+        throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Price type list too long");
+    }
+    return result;
+}
 
-    return amenityPriceTypeDao.createAmenityPriceType(req, priceTypeList);
+@Override
+public void createAmenityPriceType(TicketRequest req) {
+    amenityPriceTypeDao.createAmenityPriceType(req, buildPriceTypeList(req.getPriceTypes()));
+}
+
+@Override
+@Transactional
+public void updateAmenityPriceType(TicketRequest req) {
+    log.info("Updating Amenity Price Types for amenity: {}", req.getAmenityId());
+    amenityPriceTypeDao.updateAmenityPriceType(req, buildPriceTypeList(req.getPriceTypes()));
+}
+
+
+public void createAmenityPriceType(TicketRequest req, String priceTypeList) {
+    Map<String, Object> params = new HashMap<>();
+    params.put("p_Session_Key", req.getSessionKey());
+    params.put("p_Amenity_Id", req.getAmenityId());
+    params.put("p_Amenity_Price_Type_List", priceTypeList);
+    executeReturnId("usp_Create_Amenity_Price_Type", "p_Result_Code", params);
+}
+
+public void updateAmenityPriceType(TicketRequest req, String priceTypeList) {
+    Map<String, Object> params = new HashMap<>();
+    params.put("p_Session_Key", req.getSessionKey());
+    params.put("p_Amenity_Id", req.getAmenityId());
+    params.put("p_Amenity_Price_Type_List", priceTypeList);
+    executeReturnId("usp_Update_Amenity_Price_Type", "p_Result_Code", params);
+}
+
+
+
+@PostMapping("/create")
+public ApiResponse<Void> createAmenityPriceType(
+        @RequestBody TicketRequest req, @AuthenticationPrincipal Jwt jwt) {
+    if (jwt != null) {
+        req.setSessionKey(jwt.getClaims().get("origin_jti").toString());
+    }
+    amenityPriceTypeService.createAmenityPriceType(req);
+    return ApiResponse.success("Amenity Price Types Created", null);
+}
+
+@PostMapping("/update")
+public ApiResponse<Void> updateAmenityPriceType(
+        @RequestBody TicketRequest req, @AuthenticationPrincipal Jwt jwt) {
+    if (jwt != null) {
+        req.setSessionKey(jwt.getClaims().get("origin_jti").toString());
+    }
+    amenityPriceTypeService.updateAmenityPriceType(req);
+    return ApiResponse.success("Amenity Price Types Updated", null);
 }
