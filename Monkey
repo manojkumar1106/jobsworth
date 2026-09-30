@@ -1,36 +1,24 @@
-input CreateAmenityPriceType {
-  amenityId: Int!
-  priceTypes: [String!]!
-}
-
-
-private List<String> priceTypes;
+private List<Map<String, Object>> priceTypes;
+// getter and setter if no Lombok
 
 
 @Override
 public Integer createAmenityPriceType(TicketRequest req) {
-    List<String> items = req.getPriceTypes();
+    List<Map<String, Object>> list = req.getPriceTypes();
 
-    if (items == null || items.isEmpty() || items.size() > 15) {
-        throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Provide 1 to 15 price types");
+    if (req.getAmenityId() == null || list == null || list.isEmpty() || list.size() > 15) {
+        throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                "amenityId and 1 to 15 price types are required");
     }
 
-    String priceTypeList = items.stream().map(item -> {
-        String[] parts = item.split(",");
-        if (parts.length != 2 || parts[0].trim().isEmpty()) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                    "Each price type must be 'name,price': " + item);
-        }
-        try {
-            BigDecimal price = new BigDecimal(parts[1].trim()).setScale(2, RoundingMode.HALF_UP);
-            if (price.signum() < 0) throw new NumberFormatException();
-            return parts[0].replace("|", "").trim() + "," + price.toPlainString();
-        } catch (NumberFormatException e) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid price in: " + item);
-        }
-    }).collect(Collectors.joining("|"));
+    // [{name, price}, ...] -> 'adult,5.00|children,3.00'
+    String priceTypeList = list.stream()
+        .map(m -> m.get("amenityPriceTypeName").toString().replaceAll("[,|]", "").trim()
+                + "," + new BigDecimal(m.get("amenityBasePrice").toString())
+                        .setScale(2, RoundingMode.HALF_UP).toPlainString())
+        .collect(Collectors.joining("|"));
 
-    if (priceTypeList.length() > 1000) {
+    if (priceTypeList.length() > 1000) { // p_Amenity_Price_Type_List is VARCHAR(1000)
         throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Price type list too long");
     }
 
