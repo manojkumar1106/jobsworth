@@ -22,10 +22,7 @@ public Integer createAmenityPriceType(TicketRequest req) {
         throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Price type list too long");
     }
 
-    return amenityPriceTypeDao.createAmenityPriceType(req, priceTypeList);
-}
-
-
+    return amenityPriceTypeDao.createAmenityPriceType(req, 
 {
   "request": {
     "amenityId": 239,
@@ -35,4 +32,23 @@ public Integer createAmenityPriceType(TicketRequest req) {
       { "amenityPriceTypeName": "senior", "amenityBasePrice": 4.00 }
     ]
   }
+
+
+
+mutation CreateAmenityPriceType {
+  createAmenityPriceType(
+    request: {
+      amenityId: 239
+      priceTypes: [
+        { amenityPriceTypeName: "adult", amenityBasePrice: 6.50 }
+        { amenityPriceTypeName: "children", amenityBasePrice: 3.00 }
+        { amenityPriceTypeName: "senior", amenityBasePrice: 4.00 }
+      ]
+    }
+  ) {
+    success
+    message
+    data
+  }
 }
+
