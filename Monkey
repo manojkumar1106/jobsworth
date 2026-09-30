@@ -1,69 +1,30 @@
-// AmenityPriceTypeController.java
-@Operation(summary = "Get Default Price Type")
-@PostMapping("/get-default")
-public ApiResponse<List<Map<String, Object>>> getDefaultPriceType(@RequestBody TicketRequest req, @AuthenticationPrincipal Jwt jwt) {
-    if (jwt != null) {
-        req.setSessionKey(jwt.getClaims().get("origin_jti").toString());
-    }
-    List<Map<String, Object>> priceTypes = amenityPriceTypeService.getDefaultPriceType(req);
-    return ApiResponse.success("Default Price Types Retrieved", priceTypes);
-}
-
-// IAmenityPriceTypeService.java
-List<Map<String, Object>> getDefaultPriceType(TicketRequest req);
+private java.util.List<java.util.Map<String, Object>> priceTypes;
 
 
-// AmenityPriceTypeService.java
 @Override
-public List<Map<String, Object>> getDefaultPriceType(TicketRequest req) {
-    log.info("Getting Default Price Types");
-    List<Map<String, Object>> rows = amenityPriceTypeDao.getDefaultPriceType(req);
+public Map<String, Object> createAmenityPriceType(TicketRequest req) {
+    List<Map<String, Object>> list = req.getPriceTypes();
 
-    List<Map<String, Object>> priceTypes = new ArrayList<>();
-    if (rows != null) {
-        for (Map<String, Object> row : rows) {
-            Map<String, Object> priceType = new HashMap<>();
-            priceType.put("priceTypeId", row.get("Price_Type_Id"));
-            priceType.put("priceTypeName", row.get("Price_Type_Name"));
-            priceTypes.add(priceType);
-        }
+    if (list == null || list.isEmpty() || list.size() > 15) {
+        throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Provide 1 to 15 price types");
     }
 
-    Map<String, Object> result = new HashMap<>();
-    result.put("priceTypes", priceTypes);
-    return List.of(result);
+    String priceTypeList = list.stream()
+        .map(m -> m.get("amenityPriceTypeName").toString().replaceAll("[,|]", "").trim()
+                + "," + new BigDecimal(m.get("amenityBasePrice").toString())
+                        .setScale(2, RoundingMode.HALF_UP).toPlainString())
+        .collect(Collectors.joining("|"));
+
+    if (priceTypeList.length() > 1000) {
+        throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Price type list too long");
+    }
+
+    Map<String, Object> result = amenityPriceTypeDao.createAmenityPriceTypes(
+            req.getSessionKey(), req.getAmenityId(), priceTypeList);
+
+    int code = ((Number) result.get("p_Result_Code")).intValue();
+    if (code != 1) {
+        throw new ResponseStatusException(HttpStatus.BAD_REQUEST, (String) result.get("p_Log_Details"));
+    }
+    return Map.of("resultCode", code);
 }
-
-
-// AmenityPriceTypeDao.java
-public List<Map<String, Object>> getDefaultPriceType(TicketRequest req) {
-    Map<String, Object> params = new HashMap<>();
-    params.put("p_Session_Key", req.getSessionKey());
-    return executeList("usp_Get_Default_Price_Type", params);
-}
-
-
-
-// priceTypeService.ts
-export async function getDefaultPriceType(request: any, context: any) {
-  return await callPriceTypeData("POST", "/get-default", request, context);
-}
-
-
-
-// typeDefs.ts
-type Query {
-  getDefaultPriceType: SessionResponse
-}
-
-
-// resolvers.ts
-import { getDefaultPriceType } from "../../service/pricetypes/priceTypeService";
-
-Query: {
-  getDefaultPriceType: async (_: any, __: any, ctx: any) => {
-    ctx.logger.info("Get Default Price Type");
-    return await getDefaultPriceType({}, ctx);
-  },
-},
-
