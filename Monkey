@@ -1,68 +1,28 @@
-private List<Map<String, Object>> priceTypes;
-// getter and setter if no Lombok
+private List<AmenityPriceTypeItem> priceTypes;
+
+public static class AmenityPriceTypeItem {
+    private String amenityPriceTypeName;
+    private java.math.BigDecimal amenityBasePrice;
+
+    public String getAmenityPriceTypeName() { return amenityPriceTypeName; }
+    public void setAmenityPriceTypeName(String v) { this.amenityPriceTypeName = v; }
+    public java.math.BigDecimal getAmenityBasePrice() { return amenityBasePrice; }
+    public void setAmenityBasePrice(java.math.BigDecimal v) { this.amenityBasePrice = v; }
+}
 
 
 @Override
 public Integer createAmenityPriceType(TicketRequest req) {
-    List<Map<String, Object>> list = req.getPriceTypes();
+    List<TicketRequest.AmenityPriceTypeItem> list = req.getPriceTypes();
 
-    if (req.getAmenityId() == null || list == null || list.isEmpty() || list.size() > 15) {
-        throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                "amenityId and 1 to 15 price types are required");
+    if (list == null || list.isEmpty() || list.size() > 15) {
+        throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Provide 1 to 15 price types");
     }
 
-    // [{name, price}, ...] -> 'adult,5.00|children,3.00'
     String priceTypeList = list.stream()
-        .map(m -> m.get("amenityPriceTypeName").toString().replaceAll("[,|]", "").trim()
-                + "," + new BigDecimal(m.get("amenityBasePrice").toString())
-                        .setScale(2, RoundingMode.HALF_UP).toPlainString())
+        .map(p -> p.getAmenityPriceTypeName().replaceAll("[,|]", "").trim()
+                + "," + p.getAmenityBasePrice().setScale(2, RoundingMode.HALF_UP).toPlainString())
         .collect(Collectors.joining("|"));
 
-    if (priceTypeList.length() > 1000) { // p_Amenity_Price_Type_List is VARCHAR(1000)
-        throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Price type list too long");
-    }
-
-    return amenityPriceTypeDao.createAmenityPriceType(req, 
-{
-  "request": {
-    "amenityId": 239,
-    "priceTypes": [
-      { "amenityPriceTypeName": "adult", "amenityBasePrice": 6.50 },
-      { "amenityPriceTypeName": "children", "amenityBasePrice": 3.00 },
-      { "amenityPriceTypeName": "senior", "amenityBasePrice": 4.00 }
-    ]
-  }
-
-
-
-mutation CreateAmenityPriceType {
-  createAmenityPriceType(
-    request: {
-      amenityId: 239
-      priceTypes: [
-        { amenityPriceTypeName: "adult", amenityBasePrice: 6.50 }
-        { amenityPriceTypeName: "children", amenityBasePrice: 3.00 }
-        { amenityPriceTypeName: "senior", amenityBasePrice: 4.00 }
-      ]
-    }
-  ) {
-    success
-    message
-    data
-  }
+    return amenityPriceTypeDao.createAmenityPriceType(req, priceTypeList);
 }
-
-
-
-input AmenityPriceTypeItem {
-  amenityPriceTypeName: String!
-  amenityBasePrice: Float!
-}
-
-input CreateAmenityPriceType {
-  amenityId: Int!
-  priceTypes: [AmenityPriceTypeItem!]
-  amenityPriceTypeNames: [String!]
-  amenityBasePrices: [Float!]
-}
-
