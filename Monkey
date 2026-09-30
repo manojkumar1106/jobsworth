@@ -1,69 +1,38 @@
-private java.util.List<java.util.Map<String, Object>> priceTypes;
+input CreateAmenityPriceType {
+  amenityId: Int!
+  priceTypes: [String!]!
+}
+
+
+private List<String> priceTypes;
 
 
 @Override
-public Map<String, Object> createAmenityPriceType(TicketRequest req) {
-    List<Map<String, Object>> list = req.getPriceTypes();
+public Integer createAmenityPriceType(TicketRequest req) {
+    List<String> items = req.getPriceTypes();
 
-    if (list == null || list.isEmpty() || list.size() > 15) {
+    if (items == null || items.isEmpty() || items.size() > 15) {
         throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Provide 1 to 15 price types");
     }
 
-    String priceTypeList = list.stream()
-        .map(m -> m.get("amenityPriceTypeName").toString().replaceAll("[,|]", "").trim()
-                + "," + new BigDecimal(m.get("amenityBasePrice").toString())
-                        .setScale(2, RoundingMode.HALF_UP).toPlainString())
-        .collect(Collectors.joining("|"));
+    String priceTypeList = items.stream().map(item -> {
+        String[] parts = item.split(",");
+        if (parts.length != 2 || parts[0].trim().isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Each price type must be 'name,price': " + item);
+        }
+        try {
+            BigDecimal price = new BigDecimal(parts[1].trim()).setScale(2, RoundingMode.HALF_UP);
+            if (price.signum() < 0) throw new NumberFormatException();
+            return parts[0].replace("|", "").trim() + "," + price.toPlainString();
+        } catch (NumberFormatException e) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid price in: " + item);
+        }
+    }).collect(Collectors.joining("|"));
 
     if (priceTypeList.length() > 1000) {
         throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Price type list too long");
     }
 
-    Map<String, Object> result = amenityPriceTypeDao.createAmenityPriceTypes(
-            req.getSessionKey(), req.getAmenityId(), priceTypeList);
-
-    int code = ((Number) result.get("p_Result_Code")).intValue();
-    if (code != 1) {
-        throw new ResponseStatusException(HttpStatus.BAD_REQUEST, (String) result.get("p_Log_Details"));
-    }
-    return Map.of("resultCode", code);
+    return amenityPriceTypeDao.createAmenityPriceType(req, priceTypeList);
 }
-
-
-
-export const priceTypeTypeDefs = `
-  input AmenityPriceTypeItem {
-    amenityPriceTypeName: String!
-    amenityBasePrice: Float!
-  }
-
-  input CreateAmenityPriceType {
-    amenityId: Int!
-    priceTypes: [AmenityPriceTypeItem!]!
-  }
-
-  input UpdateAmenityPriceType {
-    amenityPriceTypeId: Int!
-    amenityPriceTypeName: String!
-    amenityBasePrice: Float!
-  }
-
-  input DeleteAmenityPriceType {
-    amenityPriceTypeId: Int!
-  }
-
-  input GetAmenityPricing {
-    amenityId: Int!
-  }
-
-  type Mutation {
-    createAmenityPriceType(request: CreateAmenityPriceType): SessionResponse
-    updateAmenityPriceType(request: UpdateAmenityPriceType): SessionResponse
-    deleteAmenityPriceType(request: DeleteAmenityPriceType): SessionResponse
-  }
-
-  type Query {
-    getAmenityPricing(request: GetAmenityPricing): SessionResponse
-    getDefaultPriceType: SessionResponse
-  }
-`;
