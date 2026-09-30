@@ -52,3 +52,17 @@ mutation CreateAmenityPriceType {
   }
 }
 
+
+
+input AmenityPriceTypeItem {
+  amenityPriceTypeName: String!
+  amenityBasePrice: Float!
+}
+
+input CreateAmenityPriceType {
+  amenityId: Int!
+  priceTypes: [AmenityPriceTypeItem!]
+  amenityPriceTypeNames: [String!]
+  amenityBasePrices: [Float!]
+}
+
