@@ -24,3 +24,15 @@ public Integer createAmenityPriceType(TicketRequest req) {
 
     return amenityPriceTypeDao.createAmenityPriceType(req, priceTypeList);
 }
+
+
+{
+  "request": {
+    "amenityId": 239,
+    "priceTypes": [
+      { "amenityPriceTypeName": "adult", "amenityBasePrice": 6.50 },
+      { "amenityPriceTypeName": "children", "amenityBasePrice": 3.00 },
+      { "amenityPriceTypeName": "senior", "amenityBasePrice": 4.00 }
+    ]
+  }
+}
