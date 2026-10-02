@@ -1,67 +1,7 @@
-package hlt.promo.engine.service;
-
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
-import hlt.promo.engine.client.AuthClient;
-import hlt.promo.engine.client.PromoEngineApiClient;
-import hlt.promo.engine.model.EngineConfig;
-import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
-import org.springframework.stereotype.Service;
-
-import java.util.List;
-import java.util.Map;
-import java.util.stream.Collectors;
-
-@Slf4j
-@Service
-@RequiredArgsConstructor
-public class EngineConfigService {
-
-    private final PromoEngineApiClient promoEngineApiClient;
-    private final AuthClient authClient;
-
-    private final ObjectMapper objectMapper = new ObjectMapper().registerModule(new JavaTimeModule());
-
-    // Get max promos per cart from DB
-    // Default fallback = 2 if not found
-    public int getMaxPromosPerCart() {
-        try {
-            Map<String, Object> row = promoEngineApiClient.getEngineConfig(
-                    authClient.createSession(), EngineConfig.MAX_PROMOS_PER_CART);
-            Object value = row != null ? row.get("configValue") : null;
-            return value != null ? Integer.parseInt(value.toString().trim()) : 2;
-        } catch (Exception e) {
-            log.warn("Could not read {} - using 2: {}", EngineConfig.MAX_PROMOS_PER_CART, e.getMessage());
-            return 2;
-        }
+try {
+        ZoneId.of(timezone);
+    } catch (DateTimeException e) {
+        throw new ValidationException(
+            "The timezone for this location is invalid ('" + timezone + "'). " +
+            "Please verify the location's physical address.");
     }
-
-    // Get all config entries
-    public List<EngineConfig> getAll() {
-        return promoEngineApiClient.getAllEngineConfig(authClient.createSession()).stream()
-                .map(this::toConfig)
-                .collect(Collectors.toList());
-    }
-
-    // Get config by key
-    public EngineConfig getByKey(String key) {
-        Map<String, Object> row = promoEngineApiClient.getEngineConfig(authClient.createSession(), key);
-        if (row == null || row.isEmpty()) {
-            throw new RuntimeException("Config not found: " + key);
-        }
-        return toConfig(row);
-    }
-
-    // Update config value
-    public EngineConfig update(String key, String value, String updatedBy) {
-        Map<String, Object> row = promoEngineApiClient.updateEngineConfig(
-                authClient.createSession(), key, value, updatedBy);
-        log.info("Config updated: {}={} by {}", key, value, updatedBy);
-        return toConfig(row);
-    }
-
-    private EngineConfig toConfig(Map<String, Object> row) {
-        return objectMapper.convertValue(row, EngineConfig.class);
-    }
-}
