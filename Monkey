@@ -1,51 +1,42 @@
-public void updatePromotion(CreatePromotionRequest request) {
+public CreateSystemDiscountResponse createSystemDiscount(CreateSystemDiscountRequest request) {
 
-    // Only validate ordering if both dates were sent.
-    if (request.getStartDate() != null && request.getEndDate() != null
-            && !request.getStartDate().isBefore(request.getEndDate())) {
-        throw new ValidationException("Start date must be before end date");
-    }
-
-    // Timezone conversion only if a date is being updated
-    if (request.getStartDate() != null || request.getEndDate() != null) {
-        if (request.getLocationId() == null) {
-            throw new ValidationException("locationId is required to resolve timezone when updating start/end date");
+        if (!request.getStartDate().isBefore(request.getEndDate())) {
+            throw new ValidationException("Start date must be before end date");
         }
+
         String timezone = promoEngineApiClient.getTimezone(
                 request.getSessionKey(), request.getLocationId().intValue());
 
-        if (request.getStartDate() != null) {
-            request.setStartDate(TimezoneConverter.toUtc(request.getStartDate(), timezone).toLocalDateTime());
+        request.setStartDate(TimezoneConverter.toUtc(request.getStartDate(), timezone).toLocalDateTime());
+        request.setEndDate(TimezoneConverter.toUtc(request.getEndDate(), timezone).toLocalDateTime());
+
+        Map<String, Object> systemDiscount = promoEngineApiClient.createSystemDiscount(request.getSessionKey(), request);
+        if (systemDiscount == null || systemDiscount.isEmpty()) {
+            throw new IllegalArgumentException("System discount was saved but no row came back");
         }
-        if (request.getEndDate() != null) {
-            request.setEndDate(TimezoneConverter.toUtc(request.getEndDate(), timezone).toLocalDateTime());
+
+        SystemDiscount sdObj = mapper().convertValue(systemDiscount, SystemDiscount.class);
+
+        log.info("Created system discount id={} location={} amenity={}",
+                sdObj.getId(), request.getLocationId(), request.getAmenityId());
+
+        boolean needsApproval = Boolean.TRUE.equals(request.getManagerApprovalRequired());
+        boolean isDraft = "DRAFT".equalsIgnoreCase(request.getSystemDiscountStatus());
+
+        if (isDraft) {
+            // DRAFT -> saved only, no Drools rule
+            log.info("Created system discount id={} status=DRAFT. No Drools.", sdObj.getId());
+            return new CreateSystemDiscountResponse(sdObj.getId(), "DRAFT");
         }
+
+        if (needsApproval) {
+            // TRUE -> PENDING, no Drools
+            log.info("Created system discount id={} status=PENDING_APPROVAL. No Drools.", sdObj.getId());
+            return new CreateSystemDiscountResponse(sdObj.getId(), "PENDING_APPROVAL");
+        }
+
+        // FALSE and not draft -> PUBLISHED, generate Drools
+        droolsRuleService.generateSystemDiscountRule(sdObj, "ADMIN", request.getSessionKey());
+        log.info("Created system discount id={} status=PUBLISHED. Drools generated.", sdObj.getId());
+        return new CreateSystemDiscountResponse(sdObj.getId(), "PUBLISHED");
     }
-
-    Map<String, Object> promotion = promoEngineApiClient.updatePromotion(request.getSessionKey(), request);
-
-    log.info("Promotion updated promotionId={} location={} amenity={} promoCode={}",
-            request.getPromotionId(), request.getLocationId(), request.getAmenityId(), request.getPromoCode());
-
-    if (PromotionStatus.PUBLISHED.name().equals(request.getPromoStatus())) {
-
-        // only PUBLISHED needs the row - the rule is built from it
-        if (promotion == null || promotion.isEmpty()) {
-            promotion = promoEngineApiClient.getPromotionByCode(request.getSessionKey(), request.getPromoCode());
-        }
-        if (promotion == null || promotion.isEmpty()) {
-            throw new ValidationException("Promotion not found after update, id=" + request.getPromotionId());
-        }
-
-        ObjectMapper objectMapper = new ObjectMapper();
-        objectMapper.registerModule(new JavaTimeModule());
-        Promotion promotionObj = objectMapper.convertValue(promotion, Promotion.class);
-
-        droolsRuleService.generatePromotionRule(promotionObj, "ADMIN", request.getSessionKey());
-
-    } else if (PromotionStatus.INACTIVE.name().equals(request.getPromoStatus())) {
-
-        // INACTIVE only needs the id - no promotion row required
-        droolsRuleService.deactivateRuleDefinition("PROMOTION", request.getPromotionId(), "ADMIN", request.getSessionKey());
-    }
-}
