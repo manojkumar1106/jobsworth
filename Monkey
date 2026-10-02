@@ -1,208 +1,5 @@
-package com.hlt.api.promotion.dao;
-
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.stereotype.Repository;
-
-import java.sql.Timestamp;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-
-/**
- * Engine config has no stored procs, so this uses plain SQL through JdbcTemplate
- * (no JPA needed in hlt-api). Table/column names follow the old entity's JSON names -
- * confirm the table is really called Engine_Config.
- */
-@Repository
-public class EngineConfigDao {
-
-    private static final String COLUMNS =
-            "Engine_Config_Id, Config_Key, Config_Value, Engine_Config_Description, Created_At, Updated_At, Updated_By";
-
-    private final JdbcTemplate jdbc;
-
-    public EngineConfigDao(JdbcTemplate jdbc) {
-        this.jdbc = jdbc;
-    }
-
-    public List<Map<String, Object>> findAll() {
-        return jdbc.query("SELECT " + COLUMNS + " FROM Engine_Config ORDER BY Config_Key",
-                (rs, i) -> toMap(rs));
-    }
-
-    /** Returns null when the key does not exist. */
-    public Map<String, Object> findByKey(String key) {
-        List<Map<String, Object>> rows = jdbc.query(
-                "SELECT " + COLUMNS + " FROM Engine_Config WHERE Config_Key = ?",
-                (rs, i) -> toMap(rs), key);
-        return rows.isEmpty() ? null : rows.get(0);
-    }
-
-    /** Returns the number of rows updated (0 = key not found). */
-    public int updateValue(String key, String value, String updatedBy) {
-        return jdbc.update(
-                "UPDATE Engine_Config SET Config_Value = ?, Updated_By = ?, Updated_At = CURRENT_TIMESTAMP "
-                        + "WHERE Config_Key = ?",
-                value, updatedBy, key);
-    }
-
-    // camelCase keys, same convention as the proc-based DAOs
-    private static Map<String, Object> toMap(java.sql.ResultSet rs) throws java.sql.SQLException {
-        Map<String, Object> m = new LinkedHashMap<>();
-        m.put("id", rs.getLong("Engine_Config_Id"));
-        m.put("configKey", rs.getString("Config_Key"));
-        m.put("configValue", rs.getString("Config_Value"));
-        m.put("description", rs.getString("Engine_Config_Description"));
-        Timestamp created = rs.getTimestamp("Created_At");
-        Timestamp updated = rs.getTimestamp("Updated_At");
-        m.put("createdAt", created != null ? created.toLocalDateTime() : null);
-        m.put("updatedAt", updated != null ? updated.toLocalDateTime() : null);
-        m.put("updatedBy", rs.getString("Updated_By"));
-        return m;
-    }
-}
-
-
-
-package com.hlt.api.promotion.service;
-
-import com.hlt.api.promotion.dao.EngineConfigDao;
-import lombok.RequiredArgsConstructor;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
-
-import java.util.List;
-import java.util.Map;
-
-@Service
-@RequiredArgsConstructor
-public class EngineConfigApiService {
-
-    private final EngineConfigDao dao;
-
-    public List<Map<String, Object>> getAll() {
-        return dao.findAll();
-    }
-
-    /** Null when not found. */
-    public Map<String, Object> getByKey(String key) {
-        return dao.findByKey(key);
-    }
-
-    @Transactional
-    public Map<String, Object> update(String key, String value, String updatedBy) {
-        if (dao.updateValue(key, value, updatedBy) == 0) {
-            throw new IllegalArgumentException("Config not found: " + key);
-        }
-        return dao.findByKey(key);   // always hand the saved row back
-    }
-}
-
-
-package com.hlt.api.promotion.controller;
-
-import com.hlt.api.promotion.service.EngineConfigApiService;
-import lombok.RequiredArgsConstructor;
-import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.*;
-
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-
-/**
- * NOTE: X-Session-Key is only required to be present here (there is no proc to validate it).
- * Add your session check (same one the procs do) before exposing this beyond internal calls.
- */
-@RestController
-@RequestMapping("/api/v1/engine-config")
-@RequiredArgsConstructor
-public class EngineConfigApiController {
-
-    private final EngineConfigApiService service;
-
-    @GetMapping
-    public ResponseEntity<List<Map<String, Object>>> getAll(@RequestHeader("X-Session-Key") String sessionKey) {
-        return ResponseEntity.ok(service.getAll());
-    }
-
-    /** Empty object when the key does not exist (same convention as the other lookups). */
-    @GetMapping("/{key}")
-    public ResponseEntity<Map<String, Object>> getByKey(@RequestHeader("X-Session-Key") String sessionKey,
-                                                        @PathVariable String key) {
-        Map<String, Object> row = service.getByKey(key);
-        return ResponseEntity.ok(row != null ? row : new HashMap<>());
-    }
-
-    @PutMapping("/{key}")
-    public ResponseEntity<Map<String, Object>> update(@RequestHeader("X-Session-Key") String sessionKey,
-                                                      @PathVariable String key,
-                                                      @RequestParam String value,
-                                                      @RequestParam(defaultValue = "ADMIN") String updatedBy) {
-        return ResponseEntity.ok(service.update(key, value, updatedBy));
-    }
-}
-
-
-package hlt.promo.engine.model;
-
-import com.fasterxml.jackson.annotation.JsonAlias;
-import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
-import com.fasterxml.jackson.annotation.JsonProperty;
-import lombok.AllArgsConstructor;
-import lombok.Data;
-import lombok.NoArgsConstructor;
-
-import java.time.LocalDateTime;
-
-/**
- * Plain data class (no JPA). Reads hlt-api's camelCase keys through @JsonAlias, and still
- * serialises with the old names so /api/config responses to existing callers don't change.
- */
-@Data
-@NoArgsConstructor
-@AllArgsConstructor
-@JsonIgnoreProperties(ignoreUnknown = true)
-public class EngineConfig {
-
-    @JsonProperty("Engine_Config_Id")
-    @JsonAlias({"id", "engineConfigId"})
-    private Long id;
-
-    @JsonProperty("Config_Key")
-    @JsonAlias("configKey")
-    private String configKey;
-
-    @JsonProperty("Config_Value")
-    @JsonAlias("configValue")
-    private String configValue;
-
-    @JsonProperty("Engine_Config_Description")
-    @JsonAlias({"description", "engineConfigDescription"})
-    private String description;
-
-    @JsonProperty("Created_At")
-    @JsonAlias("createdAt")
-    private LocalDateTime createdAt;
-
-    @JsonProperty("Updated_At")
-    @JsonAlias("updatedAt")
-    private LocalDateTime updatedAt;
-
-    @JsonProperty("Updated_By")
-    @JsonAlias("updatedBy")
-    private String updatedBy;
-
-    // Config key constants
-    public static final String MAX_PROMOS_PER_CART = "MAX_PROMOS_PER_CART";
-}
-
-
-
 package hlt.promo.engine.service;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import hlt.promo.engine.client.AuthClient;
 import hlt.promo.engine.client.PromoEngineApiClient;
 import hlt.promo.engine.model.EngineConfig;
@@ -211,89 +8,68 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
-import java.util.Map;
-import java.util.stream.Collectors;
 
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class EngineConfigService {
 
-    private static final int DEFAULT_MAX_PROMOS = 2;
-    private static final long CACHE_TTL_MS = 60_000;
-
-    private final PromoEngineApiClient apiClient;
+    private final PromoEngineApiClient promoEngineApiClient;
     private final AuthClient authClient;
 
-    private final ObjectMapper mapper = new ObjectMapper().registerModule(new JavaTimeModule());
-
-    // getMaxPromosPerCart is on the cart path - don't call the API (and log in) on every request
-    private volatile Integer cachedMaxPromos;
-    private volatile long cachedAt;
-
-    // Get max promos per cart. Default fallback = 2 if not found / API unavailable
+    // Get max promos per cart from DB
+    // Default fallback = 2 if not found
     public int getMaxPromosPerCart() {
-        Integer cached = cachedMaxPromos;
-        if (cached != null && System.currentTimeMillis() - cachedAt < CACHE_TTL_MS) {
-            return cached;
-        }
         try {
-            Map<String, Object> row = apiClient.getEngineConfig(
+            EngineConfig c = promoEngineApiClient.getEngineConfig(
                     authClient.createSession(), EngineConfig.MAX_PROMOS_PER_CART);
-            int value = DEFAULT_MAX_PROMOS;
-            if (row != null && row.get("configValue") != null) {
-                value = Integer.parseInt(row.get("configValue").toString().trim());
-            }
-            cachedMaxPromos = value;
-            cachedAt = System.currentTimeMillis();
-            return value;
+            return c.getConfigValue() != null ? Integer.parseInt(c.getConfigValue().trim()) : 2;
         } catch (Exception e) {
-            log.warn("Could not read {} - using {}: {}", EngineConfig.MAX_PROMOS_PER_CART,
-                    cached != null ? cached : DEFAULT_MAX_PROMOS, e.getMessage());
-            return cached != null ? cached : DEFAULT_MAX_PROMOS;
+            log.warn("Could not read {} - using 2: {}", EngineConfig.MAX_PROMOS_PER_CART, e.getMessage());
+            return 2;
         }
     }
 
     // Get all config entries
     public List<EngineConfig> getAll() {
-        return apiClient.getAllEngineConfig(authClient.createSession()).stream()
-                .map(m -> mapper.convertValue(m, EngineConfig.class))
-                .collect(Collectors.toList());
+        return promoEngineApiClient.getAllEngineConfig(authClient.createSession());
     }
 
     // Get config by key
     public EngineConfig getByKey(String key) {
-        Map<String, Object> row = apiClient.getEngineConfig(authClient.createSession(), key);
-        if (row == null || row.isEmpty()) {
+        EngineConfig config = promoEngineApiClient.getEngineConfig(authClient.createSession(), key);
+        if (config.getConfigKey() == null) {
             throw new RuntimeException("Config not found: " + key);
         }
-        return mapper.convertValue(row, EngineConfig.class);
+        return config;
     }
 
     // Update config value
     public EngineConfig update(String key, String value, String updatedBy) {
-        Map<String, Object> row = apiClient.updateEngineConfig(authClient.createSession(), key, value, updatedBy);
-        cachedMaxPromos = null;   // next read picks up the new value
+        EngineConfig saved = promoEngineApiClient.updateEngineConfig(
+                authClient.createSession(), key, value, updatedBy);
         log.info("Config updated: {}={} by {}", key, value, updatedBy);
-        return mapper.convertValue(row, EngineConfig.class);
+        return saved;
     }
 }
 
 
+// ---- add inside PromoEngineApiClient (imports: hlt.promo.engine.model.EngineConfig) ----
 
-// ---- add inside PromoEngineApiClient (uses its existing get()/execute()/MAP/LIST/SESSION helpers) ----
+private static final ParameterizedTypeReference<EngineConfig> CONFIG = new ParameterizedTypeReference<>() {};
+private static final ParameterizedTypeReference<List<EngineConfig>> CONFIG_LIST = new ParameterizedTypeReference<>() {};
 
 // ---------------- engine config ----------------
-public List<Map<String, Object>> getAllEngineConfig(String sessionKey) {
-    return get(sessionKey, "/api/v1/engine-config", LIST);
+public List<EngineConfig> getAllEngineConfig(String sessionKey) {
+    return get(sessionKey, "/api/v1/engine-config", CONFIG_LIST);
 }
 
-/** Returns an empty map when the key does not exist. */
-public Map<String, Object> getEngineConfig(String sessionKey, String key) {
-    return get(sessionKey, "/api/v1/engine-config/{k}", MAP, key);
+/** Returns an EngineConfig with a null configKey when the key does not exist. */
+public EngineConfig getEngineConfig(String sessionKey, String key) {
+    return get(sessionKey, "/api/v1/engine-config/{k}", CONFIG, key);
 }
 
-public Map<String, Object> updateEngineConfig(String sessionKey, String key, String value, String updatedBy) {
+public EngineConfig updateEngineConfig(String sessionKey, String key, String value, String updatedBy) {
     String by = updatedBy != null ? updatedBy : "ADMIN";
     return execute(() -> hltRestClient.put()
             .uri(b -> b.path("/api/v1/engine-config/{k}")
@@ -302,8 +78,6 @@ public Map<String, Object> updateEngineConfig(String sessionKey, String key, Str
                     .build(key, value, by))
             .header(SESSION, sessionKey)
             .retrieve()
-            .body(MAP));
+            .body(CONFIG));
 }
-
-
 
