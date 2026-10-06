@@ -1,4 +1,23 @@
+Revenue and basket size
 
+	•	Free add-on: 4+ Adult tickets in the cart → add a free audio guide or parking pass. WHEN: getTicketTitleQty("Adult") >= 4
+	•	Buy X, get Y: buy 2 Adult tickets → 1 Child ticket free. This is great for family traffic.
+	•	Threshold gift: cart over $100 → free gift-shop voucher or a café drink. It nudges people to add one more item.
+	•	Bundle upgrade: Admission + Special Exhibit in the cart → upgrade to a "Day Pass" that includes extra amenities.
+
+Filling slow times
+
+	•	Off-peak perks: weekday visits before 11am, or the last 2 hours before close, earn free locker access or bonus loyalty points. This spreads crowds without cutting ticket prices.
+	•	Weather-based: on rainy days, an indoor exhibit add-on is included automatically.
+
+Customer segments
+
+	•	Membership recognition: a logged-in member gets fast-track entry or a free guest pass automatically.
+	•	Birthday month: the visitor's birthday falls within the visit date → free dessert or a souvenir.
+	•	First-time visitor: no prior orders → a welcome kit or a return-visit voucher.
+	•	Students, seniors, or military: a verified profile flag → priority entry or a free guided tour.
+
+Retention and loyalty
 
 	•	Points multiplier: double loyalty points during holidays or new exhibit launches.
 	•	Return-visit voucher: completed visit → auto-issue a "come back within 30 days" pass.
