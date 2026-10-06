@@ -1,42 +1,13 @@
-public CreateSystemDiscountResponse createSystemDiscount(CreateSystemDiscountRequest request) {
 
-        if (!request.getStartDate().isBefore(request.getEndDate())) {
-            throw new ValidationException("Start date must be before end date");
-        }
 
-        String timezone = promoEngineApiClient.getTimezone(
-                request.getSessionKey(), request.getLocationId().intValue());
+	•	Points multiplier: double loyalty points during holidays or new exhibit launches.
+	•	Return-visit voucher: completed visit → auto-issue a "come back within 30 days" pass.
+	•	Milestone reward: 5th visit this year → free annual-pass upgrade trial.
 
-        request.setStartDate(TimezoneConverter.toUtc(request.getStartDate(), timezone).toLocalDateTime());
-        request.setEndDate(TimezoneConverter.toUtc(request.getEndDate(), timezone).toLocalDateTime());
+Operations and goodwill
 
-        Map<String, Object> systemDiscount = promoEngineApiClient.createSystemDiscount(request.getSessionKey(), request);
-        if (systemDiscount == null || systemDiscount.isEmpty()) {
-            throw new IllegalArgumentException("System discount was saved but no row came back");
-        }
+	•	Service recovery: an exhibit closed or an event cancelled → affected bookings get a free re-entry automatically.
+	•	Group logistics: 15+ tickets → a free group coordinator or a reserved entry slot.
+	•	Launch promotion: a new amenity in its first 2 weeks is added free to boost awareness.
 
-        SystemDiscount sdObj = mapper().convertValue(systemDiscount, SystemDiscount.class);
-
-        log.info("Created system discount id={} location={} amenity={}",
-                sdObj.getId(), request.getLocationId(), request.getAmenityId());
-
-        boolean needsApproval = Boolean.TRUE.equals(request.getManagerApprovalRequired());
-        boolean isDraft = "DRAFT".equalsIgnoreCase(request.getSystemDiscountStatus());
-
-        if (isDraft) {
-            // DRAFT -> saved only, no Drools rule
-            log.info("Created system discount id={} status=DRAFT. No Drools.", sdObj.getId());
-            return new CreateSystemDiscountResponse(sdObj.getId(), "DRAFT");
-        }
-
-        if (needsApproval) {
-            // TRUE -> PENDING, no Drools
-            log.info("Created system discount id={} status=PENDING_APPROVAL. No Drools.", sdObj.getId());
-            return new CreateSystemDiscountResponse(sdObj.getId(), "PENDING_APPROVAL");
-        }
-
-        // FALSE and not draft -> PUBLISHED, generate Drools
-        droolsRuleService.generateSystemDiscountRule(sdObj, "ADMIN", request.getSessionKey());
-        log.info("Created system discount id={} status=PUBLISHED. Drools generated.", sdObj.getId());
-        return new CreateSystemDiscountResponse(sdObj.getId(), "PUBLISHED");
-    }
+Implementation idea: most of these need a new action type alongside your discount actions, such as ADD_FREE_ITEM, UPGRADE, AWARD_POINTS, ISSUE_VOUCHER, or GRANT_PERK. The WHEN side reuses what you already have (cart totals, ticket titles, quantities, categories), plus context facts like visit date/time, customer profile, and weather.
