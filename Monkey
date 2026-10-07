@@ -197,3 +197,10 @@ upsertAmenityPriceType: async (_: any, { request }: any, ctx: any) => {
 },
 
 
+
+
+{ "request": { "locationFunctionId": 1, "amenityId": 10, "priceTypes": [
+  { "amenityPriceTypeName": "Adult", "amenityBasePrice": 3.50 },
+  { "amenityPriceTypeName": "Child", "amenityBasePrice": 2.00 }
+]}}
+
