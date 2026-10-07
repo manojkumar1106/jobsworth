@@ -180,3 +180,20 @@ public class AmenityPriceTypeDao extends BaseDao {
     }
 }
 
+
+
+
+
+
+export async function upsertAmenityPriceType(request: any, context: any) {
+  return await callPriceTypeData("POST", "/upsert", request, context);
+}
+
+
+
+upsertAmenityPriceType: async (_: any, { request }: any, ctx: any) => {
+  ctx.logger.info("Upsert Amenity Price Type", { request });
+  return await upsertAmenityPriceType(request, ctx);
+},
+
+
