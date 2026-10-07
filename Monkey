@@ -204,3 +204,28 @@ upsertAmenityPriceType: async (_: any, { request }: any, ctx: any) => {
   { "amenityPriceTypeName": "Child", "amenityBasePrice": 2.00 }
 ]}}
 
+
+
+
+{ "request": { "locationFunctionId": 1, "amenityId": 10, "priceTypes": [
+  { "amenityPriceTypeId": 111, "amenityPriceTypeName": "Adult", "amenityBasePrice": 4.00 },
+  { "amenityPriceTypeId": 112, "amenityPriceTypeName": "Child", "amenityBasePrice": 2.00 },
+  { "amenityPriceTypeName": "Senior", "amenityBasePrice": 2.50 }
+]}}
+
+
+
+
+{ "request": { "locationFunctionId": 1, "amenityId": 10, "priceTypes": [
+  { "amenityPriceTypeId": 111, "amenityPriceTypeName": "Adult", "amenityBasePrice": 4.00 },
+  { "amenityPriceTypeId": 113, "amenityPriceTypeName": "Senior", "amenityBasePrice": 2.50 }
+]}}
+
+
+
+
+{ "request": { "locationFunctionId": 1, "amenityId": 10, "priceTypes": [
+  { "amenityPriceTypeId": 111, "amenityPriceTypeName": "Adult", "amenityBasePrice": 4.00 },
+  { "amenityPriceTypeId": 113, "amenityPriceTypeName": "Senior Citizen", "amenityBasePrice": 2.50 }
+]}}
+
