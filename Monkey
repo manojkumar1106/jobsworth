@@ -1,32 +1,182 @@
-Revenue and basket size
+package com.hlt.api.controller;
 
-	•	Free add-on: 4+ Adult tickets in the cart → add a free audio guide or parking pass. WHEN: getTicketTitleQty("Adult") >= 4
-	•	Buy X, get Y: buy 2 Adult tickets → 1 Child ticket free. This is great for family traffic.
-	•	Threshold gift: cart over $100 → free gift-shop voucher or a café drink. It nudges people to add one more item.
-	•	Bundle upgrade: Admission + Special Exhibit in the cart → upgrade to a "Day Pass" that includes extra amenities.
+import com.hlt.api.dtos.request.TicketRequest;
+import com.hlt.api.service.IAmenityPriceTypeService;
+import io.swagger.v3.oas.annotations.Operation;
+import lombok.RequiredArgsConstructor;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.web.bind.annotation.*;
 
-Filling slow times
+// keep your existing class-level annotations / @RequestMapping path
+@RestController
+@RequiredArgsConstructor
+public class AmenityPriceTypeController {
 
-	•	Off-peak perks: weekday visits before 11am, or the last 2 hours before close, earn free locker access or bonus loyalty points. This spreads crowds without cutting ticket prices.
-	•	Weather-based: on rainy days, an indoor exhibit add-on is included automatically.
+    private final IAmenityPriceTypeService amenityPriceTypeService;
 
-Customer segments
+    @Operation(summary = "Create / Update Amenity Price Types")
+    @PostMapping({"/upsert", "/create", "/update"})
+    public ApiResponse<Void> upsertAmenityPriceType(@RequestBody TicketRequest req, @AuthenticationPrincipal Jwt jwt) {
+        if (jwt != null) {
+            req.setSessionKey(jwt.getClaims().get("origin_jti").toString());
+        }
+        amenityPriceTypeService.upsertAmenityPriceType(req);
+        return ApiResponse.success("Amenity Price Types Saved", null);
+    }
 
-	•	Membership recognition: a logged-in member gets fast-track entry or a free guest pass automatically.
-	•	Birthday month: the visitor's birthday falls within the visit date → free dessert or a souvenir.
-	•	First-time visitor: no prior orders → a welcome kit or a return-visit voucher.
-	•	Students, seniors, or military: a verified profile flag → priority entry or a free guided tour.
+    @Operation(summary = "Delete Amenity Price Type")
+    @DeleteMapping("/delete")
+    public ApiResponse<String> deleteAmenityPriceType(@RequestBody TicketRequest req, @AuthenticationPrincipal Jwt jwt) {
+        if (jwt != null) {
+            req.setSessionKey(jwt.getClaims().get("origin_jti").toString());
+        }
+        String result = amenityPriceTypeService.deleteAmenityPriceType(req);
+        return ApiResponse.success("Amenity Price Type Deleted", result);
+    }
 
-Retention and loyalty
+    // keep your existing GET endpoints (getAmenityPricing, getDefaultPriceType) as they are
+}
 
-	•	Points multiplier: double loyalty points during holidays or new exhibit launches.
-	•	Return-visit voucher: completed visit → auto-issue a "come back within 30 days" pass.
-	•	Milestone reward: 5th visit this year → free annual-pass upgrade trial.
 
-Operations and goodwill
 
-	•	Service recovery: an exhibit closed or an event cancelled → affected bookings get a free re-entry automatically.
-	•	Group logistics: 15+ tickets → a free group coordinator or a reserved entry slot.
-	•	Launch promotion: a new amenity in its first 2 weeks is added free to boost awareness.
 
-Implementation idea: most of these need a new action type alongside your discount actions, such as ADD_FREE_ITEM, UPGRADE, AWARD_POINTS, ISSUE_VOUCHER, or GRANT_PERK. The WHEN side reuses what you already have (cart totals, ticket titles, quantities, categories), plus context facts like visit date/time, customer profile, and weather.
+package com.hlt.api.service;
+
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.hlt.api.dao.AmenityPriceTypeDao;
+import com.hlt.api.model.TicketRequest; // adjust to your actual package
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.math.RoundingMode;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+
+@Slf4j
+@Service
+@RequiredArgsConstructor
+public class AmenityPriceTypeService implements IAmenityPriceTypeService {
+
+    private final AmenityPriceTypeDao amenityPriceTypeDao;
+    private final ObjectMapper objectMapper; // Spring Boot provides this bean
+
+    /**
+     * Builds the JSON array the proc expects:
+     * [ {"amenityPriceTypeId":111,"amenityPriceTypeName":"A","amenityBasePrice":3.50},
+     *   {"amenityPriceTypeName":"B","amenityBasePrice":5.00} ]
+     * Id is omitted for new rows. Nulls are passed through so the proc's
+     * validation returns a clear p_Log_Details message.
+     */
+    private String buildPriceTypeJson(List<TicketRequest.AmenityPriceTypeItem> list) {
+        List<TicketRequest.AmenityPriceTypeItem> safeList = list == null ? List.of() : list;
+
+        List<Map<String, Object>> items = safeList.stream().map(p -> {
+            Map<String, Object> m = new LinkedHashMap<>();
+            if (p.getAmenityPriceTypeId() != null && p.getAmenityPriceTypeId() > 0) {
+                m.put("amenityPriceTypeId", p.getAmenityPriceTypeId());
+            }
+            m.put("amenityPriceTypeName",
+                    p.getAmenityPriceTypeName() == null ? null : p.getAmenityPriceTypeName().trim());
+            m.put("amenityBasePrice",
+                    p.getAmenityBasePrice() == null ? null
+                            : p.getAmenityBasePrice().setScale(2, RoundingMode.HALF_UP));
+            return m;
+        }).toList();
+
+        try {
+            return objectMapper.writeValueAsString(items);
+        } catch (JsonProcessingException e) {
+            throw new IllegalArgumentException("Invalid amenity price type payload", e);
+        }
+    }
+
+    @Override
+    public List<Map<String, Object>> getAmenityPricing(TicketRequest req) {
+        return amenityPriceTypeDao.getAmenityPricing(req);
+    }
+
+    /**
+     * NOTE: the proc soft-deletes any existing price type for this amenity
+     * that is NOT in the payload, so the caller must send the full list.
+     */
+    @Override
+    @Transactional
+    public void upsertAmenityPriceType(TicketRequest req) {
+        log.info("Upserting Amenity Price Types for amenity: {}, locationFunction: {}",
+                req.getAmenityId(), req.getLocationFunctionId());
+        String json = buildPriceTypeJson(req.getPriceTypes());
+        log.debug("Price type JSON: {}", json);
+        amenityPriceTypeDao.upsertAmenityPriceType(req, json);
+    }
+
+    @Override
+    @Transactional
+    public String deleteAmenityPriceType(TicketRequest req) {
+        log.info("Soft-deleting Amenity Price Type: {}", req.getAmenityPriceTypeId());
+        return amenityPriceTypeDao.deleteAmenityPriceType(req);
+    }
+
+    @Override
+    public List<Map<String, Object>> getDefaultPriceType(TicketRequest req) {
+        // keep your existing implementation here
+        return amenityPriceTypeDao.getDefaultPriceType(req);
+    }
+}
+
+
+package com.hlt.api.dao;
+
+import com.hlt.api.model.TicketRequest; // adjust to your actual package
+import org.springframework.stereotype.Repository;
+
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+@Repository
+public class AmenityPriceTypeDao extends BaseDao {
+
+    /**
+     * Calls usp_Upsert_Amenity_Price_Type.
+     * executeVoid runs validateResultCode(out, procName), so a p_Result_Code
+     * other than success is handled the same way as your other procs.
+     */
+    public void upsertAmenityPriceType(TicketRequest req, String priceTypeJson) {
+        Map<String, Object> params = new HashMap<>();
+        params.put("p_Session_Key", req.getSessionKey());
+        params.put("p_Location_Function_Id", req.getLocationFunctionId());
+        params.put("p_Amenity_Id", req.getAmenityId());
+        params.put("p_Amenity_Price_Type_JSON", priceTypeJson);
+        executeVoid("usp_Upsert_Amenity_Price_Type", params);
+    }
+
+    public List<Map<String, Object>> getAmenityPricing(TicketRequest req) {
+        Map<String, Object> params = new HashMap<>();
+        params.put("p_Session_Key", req.getSessionKey());
+        params.put("p_Amenity_Id", req.getAmenityId());
+        return executeList("usp_Get_Amenity_Pricing", params);
+    }
+
+    public String deleteAmenityPriceType(TicketRequest req) {
+        Map<String, Object> params = new HashMap<>();
+        params.put("p_Session_Key", req.getSessionKey());
+        params.put("p_Amenity_Price_Type_Id", req.getAmenityPriceTypeId());
+        Map<String, Object> row = executeSingle("usp_Remove_Amenity_Price_Type", params);
+        if (row == null || row.isEmpty()) {
+            return null;
+        }
+        Object value = row.values().iterator().next();
+        return value == null ? null : String.valueOf(value);
+    }
+
+    public List<Map<String, Object>> getDefaultPriceType(TicketRequest req) {
+        // keep your existing getDefaultPriceType implementation here
+        throw new UnsupportedOperationException("paste existing implementation");
+    }
+}
+
