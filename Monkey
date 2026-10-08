@@ -1,231 +1,28 @@
-package com.hlt.api.controller;
+@Value("${hlt-api.skip-ssl:false}") boolean skipSsl
 
-import com.hlt.api.dtos.request.TicketRequest;
-import com.hlt.api.service.IAmenityPriceTypeService;
-import io.swagger.v3.oas.annotations.Operation;
-import lombok.RequiredArgsConstructor;
-import org.springframework.security.core.annotation.AuthenticationPrincipal;
-import org.springframework.security.oauth2.jwt.Jwt;
-import org.springframework.web.bind.annotation.*;
 
-// keep your existing class-level annotations / @RequestMapping path
-@RestController
-@RequiredArgsConstructor
-public class AmenityPriceTypeController {
-
-    private final IAmenityPriceTypeService amenityPriceTypeService;
-
-    @Operation(summary = "Create / Update Amenity Price Types")
-    @PostMapping({"/upsert", "/create", "/update"})
-    public ApiResponse<Void> upsertAmenityPriceType(@RequestBody TicketRequest req, @AuthenticationPrincipal Jwt jwt) {
-        if (jwt != null) {
-            req.setSessionKey(jwt.getClaims().get("origin_jti").toString());
-        }
-        amenityPriceTypeService.upsertAmenityPriceType(req);
-        return ApiResponse.success("Amenity Price Types Saved", null);
-    }
-
-    @Operation(summary = "Delete Amenity Price Type")
-    @DeleteMapping("/delete")
-    public ApiResponse<String> deleteAmenityPriceType(@RequestBody TicketRequest req, @AuthenticationPrincipal Jwt jwt) {
-        if (jwt != null) {
-            req.setSessionKey(jwt.getClaims().get("origin_jti").toString());
-        }
-        String result = amenityPriceTypeService.deleteAmenityPriceType(req);
-        return ApiResponse.success("Amenity Price Type Deleted", result);
-    }
-
-    // keep your existing GET endpoints (getAmenityPricing, getDefaultPriceType) as they are
+HttpClient.Builder b = HttpClient.newBuilder().connectTimeout(connectionTimeout);
+if (skipSsl) {
+    b.sslContext(skipHostnameSslContext()); // TEMP: remove when infra fixes DNS
 }
+HttpClient httpClient = b.build();
 
+private static SSLContext skipHostnameSslContext() throws Exception {
+    TrustManagerFactory tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
+    tmf.init((KeyStore) null);
+    X509TrustManager d = (X509TrustManager) tmf.getTrustManagers()[0];
 
-
-
-package com.hlt.api.service;
-
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.hlt.api.dao.AmenityPriceTypeDao;
-import com.hlt.api.model.TicketRequest; // adjust to your actual package
-import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
-
-import java.math.RoundingMode;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-
-@Slf4j
-@Service
-@RequiredArgsConstructor
-public class AmenityPriceTypeService implements IAmenityPriceTypeService {
-
-    private final AmenityPriceTypeDao amenityPriceTypeDao;
-    private final ObjectMapper objectMapper; // Spring Boot provides this bean
-
-    /**
-     * Builds the JSON array the proc expects:
-     * [ {"amenityPriceTypeId":111,"amenityPriceTypeName":"A","amenityBasePrice":3.50},
-     *   {"amenityPriceTypeName":"B","amenityBasePrice":5.00} ]
-     * Id is omitted for new rows. Nulls are passed through so the proc's
-     * validation returns a clear p_Log_Details message.
-     */
-    private String buildPriceTypeJson(List<TicketRequest.AmenityPriceTypeItem> list) {
-        List<TicketRequest.AmenityPriceTypeItem> safeList = list == null ? List.of() : list;
-
-        List<Map<String, Object>> items = safeList.stream().map(p -> {
-            Map<String, Object> m = new LinkedHashMap<>();
-            if (p.getAmenityPriceTypeId() != null && p.getAmenityPriceTypeId() > 0) {
-                m.put("amenityPriceTypeId", p.getAmenityPriceTypeId());
-            }
-            m.put("amenityPriceTypeName",
-                    p.getAmenityPriceTypeName() == null ? null : p.getAmenityPriceTypeName().trim());
-            m.put("amenityBasePrice",
-                    p.getAmenityBasePrice() == null ? null
-                            : p.getAmenityBasePrice().setScale(2, RoundingMode.HALF_UP));
-            return m;
-        }).toList();
-
-        try {
-            return objectMapper.writeValueAsString(items);
-        } catch (JsonProcessingException e) {
-            throw new IllegalArgumentException("Invalid amenity price type payload", e);
-        }
-    }
-
-    @Override
-    public List<Map<String, Object>> getAmenityPricing(TicketRequest req) {
-        return amenityPriceTypeDao.getAmenityPricing(req);
-    }
-
-    /**
-     * NOTE: the proc soft-deletes any existing price type for this amenity
-     * that is NOT in the payload, so the caller must send the full list.
-     */
-    @Override
-    @Transactional
-    public void upsertAmenityPriceType(TicketRequest req) {
-        log.info("Upserting Amenity Price Types for amenity: {}, locationFunction: {}",
-                req.getAmenityId(), req.getLocationFunctionId());
-        String json = buildPriceTypeJson(req.getPriceTypes());
-        log.debug("Price type JSON: {}", json);
-        amenityPriceTypeDao.upsertAmenityPriceType(req, json);
-    }
-
-    @Override
-    @Transactional
-    public String deleteAmenityPriceType(TicketRequest req) {
-        log.info("Soft-deleting Amenity Price Type: {}", req.getAmenityPriceTypeId());
-        return amenityPriceTypeDao.deleteAmenityPriceType(req);
-    }
-
-    @Override
-    public List<Map<String, Object>> getDefaultPriceType(TicketRequest req) {
-        // keep your existing implementation here
-        return amenityPriceTypeDao.getDefaultPriceType(req);
-    }
+    X509ExtendedTrustManager tm = new X509ExtendedTrustManager() {
+        public void checkServerTrusted(X509Certificate[] c, String a) throws CertificateException { d.checkServerTrusted(c, a); }
+        public void checkServerTrusted(X509Certificate[] c, String a, Socket s) throws CertificateException { d.checkServerTrusted(c, a); }
+        public void checkServerTrusted(X509Certificate[] c, String a, SSLEngine e) throws CertificateException { d.checkServerTrusted(c, a); }
+        public void checkClientTrusted(X509Certificate[] c, String a) {}
+        public void checkClientTrusted(X509Certificate[] c, String a, Socket s) {}
+        public void checkClientTrusted(X509Certificate[] c, String a, SSLEngine e) {}
+        public X509Certificate[] getAcceptedIssuers() { return d.getAcceptedIssuers(); }
+    };
+    SSLContext ctx = SSLContext.getInstance("TLS");
+    ctx.init(null, new TrustManager[]{tm}, null);
+    return ctx;
 }
-
-
-package com.hlt.api.dao;
-
-import com.hlt.api.model.TicketRequest; // adjust to your actual package
-import org.springframework.stereotype.Repository;
-
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-
-@Repository
-public class AmenityPriceTypeDao extends BaseDao {
-
-    /**
-     * Calls usp_Upsert_Amenity_Price_Type.
-     * executeVoid runs validateResultCode(out, procName), so a p_Result_Code
-     * other than success is handled the same way as your other procs.
-     */
-    public void upsertAmenityPriceType(TicketRequest req, String priceTypeJson) {
-        Map<String, Object> params = new HashMap<>();
-        params.put("p_Session_Key", req.getSessionKey());
-        params.put("p_Location_Function_Id", req.getLocationFunctionId());
-        params.put("p_Amenity_Id", req.getAmenityId());
-        params.put("p_Amenity_Price_Type_JSON", priceTypeJson);
-        executeVoid("usp_Upsert_Amenity_Price_Type", params);
-    }
-
-    public List<Map<String, Object>> getAmenityPricing(TicketRequest req) {
-        Map<String, Object> params = new HashMap<>();
-        params.put("p_Session_Key", req.getSessionKey());
-        params.put("p_Amenity_Id", req.getAmenityId());
-        return executeList("usp_Get_Amenity_Pricing", params);
-    }
-
-    public String deleteAmenityPriceType(TicketRequest req) {
-        Map<String, Object> params = new HashMap<>();
-        params.put("p_Session_Key", req.getSessionKey());
-        params.put("p_Amenity_Price_Type_Id", req.getAmenityPriceTypeId());
-        Map<String, Object> row = executeSingle("usp_Remove_Amenity_Price_Type", params);
-        if (row == null || row.isEmpty()) {
-            return null;
-        }
-        Object value = row.values().iterator().next();
-        return value == null ? null : String.valueOf(value);
-    }
-
-    public List<Map<String, Object>> getDefaultPriceType(TicketRequest req) {
-        // keep your existing getDefaultPriceType implementation here
-        throw new UnsupportedOperationException("paste existing implementation");
-    }
-}
-
-
-
-
-
-
-export async function upsertAmenityPriceType(request: any, context: any) {
-  return await callPriceTypeData("POST", "/upsert", request, context);
-}
-
-
-
-upsertAmenityPriceType: async (_: any, { request }: any, ctx: any) => {
-  ctx.logger.info("Upsert Amenity Price Type", { request });
-  return await upsertAmenityPriceType(request, ctx);
-},
-
-
-
-
-{ "request": { "locationFunctionId": 1, "amenityId": 10, "priceTypes": [
-  { "amenityPriceTypeName": "Adult", "amenityBasePrice": 3.50 },
-  { "amenityPriceTypeName": "Child", "amenityBasePrice": 2.00 }
-]}}
-
-
-
-
-{ "request": { "locationFunctionId": 1, "amenityId": 10, "priceTypes": [
-  { "amenityPriceTypeId": 111, "amenityPriceTypeName": "Adult", "amenityBasePrice": 4.00 },
-  { "amenityPriceTypeId": 112, "amenityPriceTypeName": "Child", "amenityBasePrice": 2.00 },
-  { "amenityPriceTypeName": "Senior", "amenityBasePrice": 2.50 }
-]}}
-
-
-
-
-{ "request": { "locationFunctionId": 1, "amenityId": 10, "priceTypes": [
-  { "amenityPriceTypeId": 111, "amenityPriceTypeName": "Adult", "amenityBasePrice": 4.00 },
-  { "amenityPriceTypeId": 113, "amenityPriceTypeName": "Senior", "amenityBasePrice": 2.50 }
-]}}
-
-
-
-
-{ "request": { "locationFunctionId": 1, "amenityId": 10, "priceTypes": [
-  { "amenityPriceTypeId": 111, "amenityPriceTypeName": "Adult", "amenityBasePrice": 4.00 },
-  { "amenityPriceTypeId": 113, "amenityPriceTypeName": "Senior Citizen", "amenityBasePrice": 2.50 }
-]}}
 
