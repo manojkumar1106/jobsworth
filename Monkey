@@ -26,3 +26,11 @@ private static SSLContext skipHostnameSslContext() throws Exception {
     return ctx;
 }
 
+
+Title: Allow multiple schedules per amenity (JSON array support)
+
+User story:
+As a client, I can create more than one schedule for an amenity. For example, every Monday and Wednesday at 10:00 AM, and another schedule every Tuesday and Thursday at 4:00 PM. This applies to both General Admission and Timed Admission.
+
+Background:
+Today each amenity supports one schedule, sent as a single object. The schedule payload changes to an array of schedule objects (3 schedules means 3 objects). Schedule_JSON and Dates_JSON are passed as real JSON end to end, not stringified.
