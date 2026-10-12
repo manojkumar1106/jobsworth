@@ -74,4 +74,8 @@ CALL client1.usp_Upsert_Amenity_Schedule_JSON(
 
 SELECT @p_Result_Code, @p_Log_Details;
 
+private static String stripZ(String value) {
+    return value.endsWith("Z") ? value.substring(0, value.length() - 1) : value;
+}
+
 
