@@ -1,281 +1,51 @@
-package com.hlt.api.util;
-
-import tools.jackson.core.JacksonException;
-import tools.jackson.databind.JsonNode;
-import tools.jackson.databind.ObjectMapper;
-import tools.jackson.databind.json.JsonMapper;
-import tools.jackson.databind.node.ArrayNode;
-import tools.jackson.databind.node.ObjectNode;
-import com.hlt.api.exception.BadRequestException;
-
-import java.time.LocalDateTime;
-import java.time.ZoneOffset;
-import java.time.format.DateTimeFormatter;
-import java.time.temporal.ChronoUnit;
-import java.util.ArrayList;
-import java.util.Comparator;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
-
-/**
- * Timezone conversion for amenity schedule JSON, kept out of AmenityService.
- * All zone math goes through TimezoneConverter, so DST handling matches the sales funnel.
- *
- *   save : "2026-10-01T11:00:00"       (local) -> "2026-10-01T16:00:00.000Z" (UTC)
- *   read : "2026-10-01T16:00:00.000Z"  (UTC)   -> "2026-10-01T11:00:00"      (local)
- *   rrule: DTSTART / UNTIL inside rruleText are converted the same way.
- *   rule : UI recurrence settings are local and are never converted.
- */
-public final class ScheduleTimezoneUtil {
-
-    private static final ObjectMapper MAPPER = JsonMapper.builder().build();
-    private static final DateTimeFormatter UTC_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'");
-    private static final DateTimeFormatter RRULE_FORMAT = DateTimeFormatter.ofPattern("yyyyMMdd'T'HHmmss");
-    private static final Pattern RRULE_DATE = Pattern.compile("(DTSTART:|UNTIL=)(\\d{8}T\\d{6})(Z?)");
-
-    // JSON field names (same in request and response)
-    private static final String SCHEDULE_JSON = "scheduleJson";
-    private static final String RRULE_TEXT = "rruleText";
-    private static final String RULE = "rule";
-    private static final String DATES_JSON = "datesJson";
-    private static final String START = "startDateTime";
-    private static final String END = "endDateTime";
-
-    // Proc column names after BaseDao camel-casing (matched ignoring case, e.g. RRule_Text -> rRuleText)
-    private static final String COL_ALL_DATES = "allAmenityScheduleDates";
-    private static final String COL_SCHEDULE_ID = "amenityScheduleId";
-    private static final String COL_SCHEDULE_NAME = "scheduleName";
-    private static final String COL_RULE = "ruleJson";
-    private static final String COL_RRULE = "rruleText";
-    private static final String COL_DATES = "datesJson";
-
-    private ScheduleTimezoneUtil() {
+{
+  "schedules": [
+    {
+      "id": null,
+      "name": "Monring hrs",
+      "scheduleJson": {
+        "rule": {
+          "startDate": "2026-10-01", "startTime": "11:00",
+          "endDate": "2026-10-01", "endTime": "12:00",
+          "frequency": "DAILY", "interval": 1, "daysOfWeek": [],
+          "recurrenceEndMode": "ON_DATE", "recurrenceEndDate": "2026-10-03"
+        },
+        "rruleText": "DTSTART:20261001T160000Z\nRRULE:INTERVAL=1;FREQ=DAILY;UNTIL=20261003T235900Z"
+      },
+      "datesJson": [
+        { "startDateTime": "2026-10-01T16:00:00.000Z", "endDateTime": "2026-10-01T17:00:00.000Z" },
+        { "startDateTime": "2026-10-02T16:00:00.000Z", "endDateTime": "2026-10-02T17:00:00.000Z" },
+        { "startDateTime": "2026-10-03T16:00:00.000Z", "endDateTime": "2026-10-03T17:00:00.000Z" }
+      ]
+    },
+    {
+      "id": null,
+      "name": "Evng hrs",
+      "scheduleJson": {
+        "rule": {
+          "startDate": "2026-10-01", "startTime": "17:00",
+          "endDate": "2026-10-01", "endTime": "18:00",
+          "frequency": "DAILY", "interval": 1, "daysOfWeek": [],
+          "recurrenceEndMode": "ON_DATE", "recurrenceEndDate": "2026-10-03"
+        },
+        "rruleText": "DTSTART:20261001T220000Z\nRRULE:INTERVAL=1;FREQ=DAILY;UNTIL=20261003T235900Z"
+      },
+      "datesJson": [
+        { "startDateTime": "2026-10-01T22:00:00.000Z", "endDateTime": "2026-10-01T23:00:00.000Z" },
+        { "startDateTime": "2026-10-02T22:00:00.000Z", "endDateTime": "2026-10-02T23:00:00.000Z" },
+        { "startDateTime": "2026-10-03T22:00:00.000Z", "endDateTime": "2026-10-03T23:00:00.000Z" }
+      ]
     }
-
-    // ================================================================ save (local -> UTC)
-
-    /** Converts the schedules JSON to UTC, in place. Any shape: { "schedules": [...] }, [...], or a flat dates list. */
-    public static void schedulesToUtc(JsonNode schedules, String timezone) {
-        walkToUtc(schedules, timezone);
-    }
-
-    /** Converts the all-dates JSON (mix of every schedule's datesJson) to UTC, in place. Any shape. */
-    public static void datesToUtc(JsonNode dates, String timezone) {
-        walkToUtc(dates, timezone);
-    }
-
-    /**
-     * Walks the whole JSON tree and converts every startDateTime / endDateTime / rruleText it finds.
-     * "rule" (the UI form settings) is skipped on purpose: it stays local.
-     * Values already ending in Z are left alone, so UTC input is never converted twice.
-     */
-    private static void walkToUtc(JsonNode node, String timezone) {
-        if (node == null) {
-            return;
-        }
-        if (node.isArray()) {
-            node.forEach(child -> walkToUtc(child, timezone));
-            return;
-        }
-        if (!(node instanceof ObjectNode object)) {
-            return;
-        }
-        for (String field : new String[]{START, END}) {
-            if (object.hasNonNull(field) && object.get(field).isTextual()) {
-                object.put(field, toUtc(object.get(field).asText(), timezone));
-            }
-        }
-        if (object.hasNonNull(RRULE_TEXT) && object.get(RRULE_TEXT).isTextual()) {
-            object.put(RRULE_TEXT, convertRrule(object.get(RRULE_TEXT).asText(), timezone, true));
-        }
-        object.properties().forEach(entry -> {
-            if (!RULE.equals(entry.getKey())) {
-                walkToUtc(entry.getValue(), timezone);
-            }
-        });
-    }
-
-    /** All schedules' dates in one sorted array (call after schedulesToUtc; UTC strings sort correctly). */
-    public static ArrayNode collectDates(JsonNode schedules) {
-        List<JsonNode> all = new ArrayList<>();
-        for (JsonNode schedule : scheduleArray(schedules)) {
-            JsonNode dates = schedule.get(DATES_JSON);
-            if (dates != null && dates.isArray()) {
-                dates.forEach(all::add);
-            }
-        }
-        all.sort(Comparator.comparing(d -> d.path(START).asText()));
-        return MAPPER.createArrayNode().addAll(all);
-    }
-
-    /** [ ... ] -> itself;  { "schedules": [ ... ] } -> the inner array;  anything else -> empty. */
-    private static JsonNode scheduleArray(JsonNode node) {
-        if (node == null) {
-            return MAPPER.createArrayNode();
-        }
-        if (node.isArray()) {
-            return node;
-        }
-        JsonNode inner = node.get("schedules");
-        return inner != null && inner.isArray() ? inner : MAPPER.createArrayNode();
-    }
-
-    public static String toJson(JsonNode node) {
-        return node == null ? null : node.toString();
-    }
-
-    /** JSON string -> JsonNode (null/blank -> null). Invalid JSON -> 400. */
-    public static JsonNode readJson(String json) {
-        if (json == null || json.isBlank()) {
-            return null;
-        }
-        try {
-            return MAPPER.readTree(json);
-        } catch (JacksonException e) {
-            throw new BadRequestException("Invalid schedule JSON: " + e.getOriginalMessage());
-        }
-    }
-
-    /** Accepts JSON sent as an object/array OR as a JSON string, and always returns real JSON. */
-    public static JsonNode unwrap(JsonNode node) {
-        return node != null && node.isTextual() ? readJson(node.asText()) : node;
-    }
-
-    // ================================================================ read (UTC -> local)
-
-    /** Result set 1 (header row) -> local allAmenityScheduleDates array. */
-    public static JsonNode toLocalAllDates(Map<String, Object> headerRow, String timezone) {
-        return toLocalDates(column(headerRow, COL_ALL_DATES), timezone);
-    }
-
-    /** Result set 2 (one schedule row) -> same shape the UI sends on upsert, in local time. */
-    public static Map<String, Object> toLocalSchedule(Map<String, Object> row, String timezone) {
-        Object rrule = column(row, COL_RRULE);
-
-        Map<String, Object> scheduleJson = new LinkedHashMap<>();
-        scheduleJson.put("rule", parse(column(row, COL_RULE)));
-        scheduleJson.put(RRULE_TEXT, rrule == null ? null : convertRrule(rrule.toString(), timezone, false));
-
-        Map<String, Object> schedule = new LinkedHashMap<>();
-        schedule.put("id", column(row, COL_SCHEDULE_ID));
-        schedule.put("name", column(row, COL_SCHEDULE_NAME));
-        schedule.put(SCHEDULE_JSON, scheduleJson);
-        schedule.put(DATES_JSON, toLocalDates(column(row, COL_DATES), timezone));
-        return schedule;
-    }
-
-    private static JsonNode toLocalDates(Object datesJson, String timezone) {
-        JsonNode dates = datesJson == null ? MAPPER.createArrayNode() : parse(datesJson);
-        convertDates(dates, timezone);
-        return dates;
-    }
-
-    // ================================================================ internals
-
-    private static void convertDates(JsonNode dates, String timezone) {
-        if (dates == null || !dates.isArray()) {
-            return;
-        }
-        for (JsonNode node : dates) {
-            ObjectNode date = (ObjectNode) node;
-            for (String field : new String[]{START, END}) {
-                if (date.hasNonNull(field)) {
-                    date.put(field, toLocal(date.get(field).asText(), timezone));
-                }
-            }
-        }
-    }
-
-    private static String toUtc(String local, String timezone) {
-        if (local.endsWith("Z")) {
-            return local; // already UTC, don't convert twice
-        }
-        LocalDateTime localDateTime = LocalDateTime.parse(local);
-        requireValidLocalTime(localDateTime, timezone);
-        return TimezoneConverter.toUtc(localDateTime, timezone).format(UTC_FORMAT);
-    }
-
-    private static String toLocal(String utc, String timezone) {
-        LocalDateTime utcDateTime = LocalDateTime.parse(utc.replace("Z", ""));
-        LocalDateTime local = TimezoneConverter.toLocal(utcDateTime, timezone).truncatedTo(ChronoUnit.SECONDS);
-        return DateTimeFormatter.ISO_LOCAL_DATE_TIME.format(local);
-    }
-
-    /** Rewrites DTSTART / UNTIL. Date-only UNTIL (UNTIL=20261003) is left unchanged. */
-    private static String convertRrule(String rrule, String timezone, boolean toUtc) {
-        if (rrule == null || rrule.isBlank()) {
-            return rrule;
-        }
-        Matcher matcher = RRULE_DATE.matcher(rrule);
-        StringBuilder out = new StringBuilder();
-        while (matcher.find()) {
-            String prefix = matcher.group(1);
-            LocalDateTime value = LocalDateTime.parse(matcher.group(2), RRULE_FORMAT);
-            boolean isUtc = !matcher.group(3).isEmpty();
-
-            String converted = matcher.group(2) + matcher.group(3);
-            if (toUtc && !isUtc) {
-                requireValidLocalTime(value, timezone);
-                converted = TimezoneConverter.toUtc(value, timezone)
-                        .withOffsetSameInstant(ZoneOffset.UTC).format(RRULE_FORMAT) + "Z";
-            } else if (!toUtc && isUtc) {
-                converted = TimezoneConverter.toLocal(value, timezone).format(RRULE_FORMAT);
-            }
-            matcher.appendReplacement(out, Matcher.quoteReplacement(prefix + converted));
-        }
-        matcher.appendTail(out);
-        return out.toString();
-    }
-
-    /** A local time inside the spring-forward gap (e.g. 2:30 AM) doesn't exist; reject it instead of shifting it. */
-    private static void requireValidLocalTime(LocalDateTime local, String timezone) {
-        if (TimezoneConverter.isInDstGap(local, timezone)) {
-            throw new BadRequestException("The time " + local + " does not exist in " + timezone
-                    + " because of daylight saving. Please choose a different time.");
-        }
-    }
-
-    private static Object column(Map<String, Object> row, String name) {
-        for (Map.Entry<String, Object> entry : row.entrySet()) {
-            if (entry.getKey().equalsIgnoreCase(name)) {
-                return entry.getValue();
-            }
-        }
-        return null;
-    }
-
-    private static JsonNode parse(Object json) {
-        if (json == null) {
-            return null;
-        }
-        try {
-            return MAPPER.readTree(json.toString());
-        } catch (JacksonException e) {
-            throw new IllegalStateException("Stored schedule JSON is invalid", e);
-        }
-    }
+  ]
 }
 
 
-@Override
-public void upsertAmenitySchedule(TicketRequest req) {
-    String timezone = resolveTimezone(req);
 
-    // unwrap: works whether the UI sends real JSON or a JSON string
-    JsonNode schedules = ScheduleTimezoneUtil.unwrap(req.getSchedules());
-    ScheduleTimezoneUtil.schedulesToUtc(schedules, timezone);
-
-    JsonNode allDates = ScheduleTimezoneUtil.unwrap(req.getAllAmenityScheduleDates());
-    if (allDates == null || allDates.isEmpty()) {
-        allDates = ScheduleTimezoneUtil.collectDates(schedules);
-    } else {
-        ScheduleTimezoneUtil.datesToUtc(allDates, timezone);
-    }
-
-    amenityDao.upsertAmenitySchedule(req.getSessionKey(), req.getLocationFunctionId(), req.getAmenityId(),
-            ScheduleTimezoneUtil.toJson(allDates), ScheduleTimezoneUtil.toJson(schedules));
-}
-
+[
+  { "startDateTime": "2026-10-01T16:00:00.000Z", "endDateTime": "2026-10-01T17:00:00.000Z" },
+  { "startDateTime": "2026-10-01T22:00:00.000Z", "endDateTime": "2026-10-01T23:00:00.000Z" },
+  { "startDateTime": "2026-10-02T16:00:00.000Z", "endDateTime": "2026-10-02T17:00:00.000Z" },
+  { "startDateTime": "2026-10-02T22:00:00.000Z", "endDateTime": "2026-10-02T23:00:00.000Z" },
+  { "startDateTime": "2026-10-03T16:00:00.000Z", "endDateTime": "2026-10-03T17:00:00.000Z" },
+  { "startDateTime": "2026-10-03T22:00:00.000Z", "endDateTime": "2026-10-03T23:00:00.000Z" }
+]
