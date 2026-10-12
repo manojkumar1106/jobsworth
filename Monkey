@@ -52,3 +52,26 @@
     ]
   }
 }
+
+
+
+SET @p_Result_Code = 0;
+SET @p_Log_Details = '';
+
+CALL client1.usp_Upsert_Amenity_Schedule_JSON(
+  'sk-manoj',
+  411,
+  242,
+  -- 4th: p_All_Amenity_Schedule_Dates_JSON (flat dates)
+  '[{"startDateTime":"2026-10-20T13:00:00.000Z","endDateTime":"2026-10-20T14:00:00.000Z"},
+    {"startDateTime":"2026-10-20T17:00:00.000Z","endDateTime":"2026-10-20T18:00:00.000Z"}]',
+  -- 5th: p_Amenity_Schedule_JSON (schedules array)
+  '[{"id":null,"name":"SQL Breakfast 1","scheduleJson":{"rule":{"startDate":"2026-10-20","startTime":"08:00","endDate":"2026-10-20","endTime":"09:00","frequency":"DAILY","interval":1,"daysOfWeek":[],"recurrenceEndMode":"ON_DATE","recurrenceEndDate":"2026-10-20"},"rruleText":"DTSTART:20261020T130000Z\\nRRULE:INTERVAL=1;FREQ=DAILY;UNTIL=20261020T235900Z"},"datesJson":[{"startDateTime":"2026-10-20T13:00:00.000Z","endDateTime":"2026-10-20T14:00:00.000Z"}]},
+    {"id":null,"name":"SQL Lunch 1","scheduleJson":{"rule":{"startDate":"2026-10-20","startTime":"12:00","endDate":"2026-10-20","endTime":"13:00","frequency":"DAILY","interval":1,"daysOfWeek":[],"recurrenceEndMode":"ON_DATE","recurrenceEndDate":"2026-10-20"},"rruleText":"DTSTART:20261020T170000Z\\nRRULE:INTERVAL=1;FREQ=DAILY;UNTIL=20261020T235900Z"},"datesJson":[{"startDateTime":"2026-10-20T17:00:00.000Z","endDateTime":"2026-10-20T18:00:00.000Z"}]}]',
+  @p_Result_Code,
+  @p_Log_Details
+);
+
+SELECT @p_Result_Code, @p_Log_Details;
+
+
