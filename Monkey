@@ -372,3 +372,11 @@ public final class ScheduleTimezoneUtil {
         }
     }
 }
+
+
+
+@ExceptionHandler(BadRequestException.class)
+public ResponseEntity<ApiResponse<String>> handleBadRequestException(BadRequestException ex) {
+    log.warn("Bad Request: {}", ex.getMessage());
+    return new ResponseEntity<>(ApiResponse.error(ex.getMessage()), HttpStatus.BAD_REQUEST);
+}
