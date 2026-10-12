@@ -7,7 +7,7 @@
     "schedules": [
       {
         "id": null,
-        "name": "Test Breakfast 1012",
+        "name": "Local Breakfast",
         "scheduleJson": {
           "rule": {
             "startDate": "2026-10-20", "startTime": "08:00",
@@ -15,67 +15,33 @@
             "frequency": "DAILY", "interval": 1, "daysOfWeek": [],
             "recurrenceEndMode": "ON_DATE", "recurrenceEndDate": "2026-10-22"
           },
-          "rruleText": "DTSTART:20261020T130000Z\nRRULE:INTERVAL=1;FREQ=DAILY;UNTIL=20261022T235900Z"
+          "rruleText": "DTSTART:20261020T080000\nRRULE:INTERVAL=1;FREQ=DAILY;UNTIL=20261022T235900"
         },
         "datesJson": [
-          { "startDateTime": "2026-10-20T13:00:00.000Z", "endDateTime": "2026-10-20T14:00:00.000Z" },
-          { "startDateTime": "2026-10-21T13:00:00.000Z", "endDateTime": "2026-10-21T14:00:00.000Z" },
-          { "startDateTime": "2026-10-22T13:00:00.000Z", "endDateTime": "2026-10-22T14:00:00.000Z" }
+          { "startDateTime": "2026-10-20T08:00:00", "endDateTime": "2026-10-20T09:00:00" },
+          { "startDateTime": "2026-10-21T08:00:00", "endDateTime": "2026-10-21T09:00:00" },
+          { "startDateTime": "2026-10-22T08:00:00", "endDateTime": "2026-10-22T09:00:00" }
         ]
       },
       {
         "id": null,
-        "name": "Test Lunch 1012",
+        "name": "Local Evening DST",
         "scheduleJson": {
           "rule": {
-            "startDate": "2026-10-20", "startTime": "12:00",
-            "endDate": "2026-10-20", "endTime": "13:00",
+            "startDate": "2026-10-31", "startTime": "18:00",
+            "endDate": "2026-10-31", "endTime": "19:00",
             "frequency": "DAILY", "interval": 1, "daysOfWeek": [],
-            "recurrenceEndMode": "ON_DATE", "recurrenceEndDate": "2026-10-22"
+            "recurrenceEndMode": "ON_DATE", "recurrenceEndDate": "2026-11-02"
           },
-          "rruleText": "DTSTART:20261020T170000Z\nRRULE:INTERVAL=1;FREQ=DAILY;UNTIL=20261022T235900Z"
+          "rruleText": "DTSTART:20261031T180000\nRRULE:INTERVAL=1;FREQ=DAILY;UNTIL=20261102T235900"
         },
         "datesJson": [
-          { "startDateTime": "2026-10-20T17:00:00.000Z", "endDateTime": "2026-10-20T18:00:00.000Z" },
-          { "startDateTime": "2026-10-21T17:00:00.000Z", "endDateTime": "2026-10-21T18:00:00.000Z" },
-          { "startDateTime": "2026-10-22T17:00:00.000Z", "endDateTime": "2026-10-22T18:00:00.000Z" }
+          { "startDateTime": "2026-10-31T18:00:00", "endDateTime": "2026-10-31T19:00:00" },
+          { "startDateTime": "2026-11-01T18:00:00", "endDateTime": "2026-11-01T19:00:00" },
+          { "startDateTime": "2026-11-02T18:00:00", "endDateTime": "2026-11-02T19:00:00" }
         ]
       }
     ],
-    "allAmenityScheduleDates": [
-      { "startDateTime": "2026-10-20T13:00:00.000Z", "endDateTime": "2026-10-20T14:00:00.000Z" },
-      { "startDateTime": "2026-10-20T17:00:00.000Z", "endDateTime": "2026-10-20T18:00:00.000Z" },
-      { "startDateTime": "2026-10-21T13:00:00.000Z", "endDateTime": "2026-10-21T14:00:00.000Z" },
-      { "startDateTime": "2026-10-21T17:00:00.000Z", "endDateTime": "2026-10-21T18:00:00.000Z" },
-      { "startDateTime": "2026-10-22T13:00:00.000Z", "endDateTime": "2026-10-22T14:00:00.000Z" },
-      { "startDateTime": "2026-10-22T17:00:00.000Z", "endDateTime": "2026-10-22T18:00:00.000Z" }
-    ]
+    "allAmenityScheduleDates": []
   }
 }
-
-
-
-SET @p_Result_Code = 0;
-SET @p_Log_Details = '';
-
-CALL client1.usp_Upsert_Amenity_Schedule_JSON(
-  'sk-manoj',
-  411,
-  242,
-  -- 4th: p_All_Amenity_Schedule_Dates_JSON (flat dates)
-  '[{"startDateTime":"2026-10-20T13:00:00.000Z","endDateTime":"2026-10-20T14:00:00.000Z"},
-    {"startDateTime":"2026-10-20T17:00:00.000Z","endDateTime":"2026-10-20T18:00:00.000Z"}]',
-  -- 5th: p_Amenity_Schedule_JSON (schedules array)
-  '[{"id":null,"name":"SQL Breakfast 1","scheduleJson":{"rule":{"startDate":"2026-10-20","startTime":"08:00","endDate":"2026-10-20","endTime":"09:00","frequency":"DAILY","interval":1,"daysOfWeek":[],"recurrenceEndMode":"ON_DATE","recurrenceEndDate":"2026-10-20"},"rruleText":"DTSTART:20261020T130000Z\\nRRULE:INTERVAL=1;FREQ=DAILY;UNTIL=20261020T235900Z"},"datesJson":[{"startDateTime":"2026-10-20T13:00:00.000Z","endDateTime":"2026-10-20T14:00:00.000Z"}]},
-    {"id":null,"name":"SQL Lunch 1","scheduleJson":{"rule":{"startDate":"2026-10-20","startTime":"12:00","endDate":"2026-10-20","endTime":"13:00","frequency":"DAILY","interval":1,"daysOfWeek":[],"recurrenceEndMode":"ON_DATE","recurrenceEndDate":"2026-10-20"},"rruleText":"DTSTART:20261020T170000Z\\nRRULE:INTERVAL=1;FREQ=DAILY;UNTIL=20261020T235900Z"},"datesJson":[{"startDateTime":"2026-10-20T17:00:00.000Z","endDateTime":"2026-10-20T18:00:00.000Z"}]}]',
-  @p_Result_Code,
-  @p_Log_Details
-);
-
-SELECT @p_Result_Code, @p_Log_Details;
-
-private static String stripZ(String value) {
-    return value.endsWith("Z") ? value.substring(0, value.length() - 1) : value;
-}
-
-
