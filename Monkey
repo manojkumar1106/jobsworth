@@ -45,3 +45,180 @@
     "allAmenityScheduleDates": []
   }
 }
+
+
+
+// =====================================================================================
+// AmenityService: only these parts change. Same pattern as SalesFunnelService
+// (normalizeCutoffToUtc / addLocalCutoffTime).
+// =====================================================================================
+
+// ---- imports (add if missing) -------------------------------------------------------
+import com.hlt.api.dao.SalesFunnelDao;
+import com.hlt.api.util.ScheduleTimezoneUtil;
+import com.hlt.api.util.TimezoneConverter;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+
+// ---- field --------------------------------------------------------------------------
+@Autowired
+private SalesFunnelDao salesFunnelDao;
+
+// ---- replace upsertAmenitySchedule --------------------------------------------------
+@Override
+public void upsertAmenitySchedule(TicketRequest req) {
+    String timezone = getTimezone(req);
+    ScheduleTimezoneUtil.schedulesToUtc(req.getSchedules(), timezone);
+    ScheduleTimezoneUtil.datesToUtc(req.getAllAmenityScheduleDates(), timezone);
+
+    amenityDao.upsertAmenitySchedule(req.getSessionKey(), req.getLocationFunctionId(), req.getAmenityId(),
+            req.getAllAmenityScheduleDates().toString(),  // p_All_Amenity_Schedule_Dates_JSON
+            req.getSchedules().toString());               // p_Amenity_Schedule_JSON
+}
+
+// ---- replace getAmenitySchedule -----------------------------------------------------
+@Override
+public List<Map<String, Object>> getAmenitySchedule(TicketRequest req) {
+    List<List<Map<String, Object>>> resultSets =
+            amenityDao.getAmenitySchedule(req.getSessionKey(), req.getLocationFunctionId(), req.getAmenityId());
+    List<Map<String, Object>> header = resultSets.get(0);
+    List<Map<String, Object>> rows = resultSets.get(1);
+
+    Map<String, Object> response = new LinkedHashMap<>();
+    response.put("amenityId", req.getAmenityId());
+    response.put("allAmenityScheduleDates", List.of());
+    response.put("schedules", List.of());
+    if (rows.isEmpty()) {
+        return List.of(response);
+    }
+
+    String timezone = getTimezone(req);
+    if (!header.isEmpty()) {
+        response.put("allAmenityScheduleDates",
+                ScheduleTimezoneUtil.datesToLocal(header.get(0).get("allAmenityScheduleDates"), timezone));
+    }
+    response.put("schedules", rows.stream().map(row -> ScheduleTimezoneUtil.scheduleToLocal(row, timezone)).toList());
+    return List.of(response);
+}
+
+// ---- add (same two lines SalesFunnelService uses) -----------------------------------
+private String getTimezone(TicketRequest req) {
+    String timezone = salesFunnelDao.getTimezoneByLocation(req);
+    TimezoneConverter.validateTimezone(timezone);
+    return timezone;
+}
+
+
+
+
+
+
+package com.hlt.api.util;
+
+import com.hlt.api.exception.BadRequestException;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
+import tools.jackson.databind.node.ObjectNode;
+
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.function.UnaryOperator;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+/**
+ * Amenity schedule JSON <-> UTC. All zone math is TimezoneConverter; this class only walks the JSON.
+ * Converted: datesJson, allAmenityScheduleDates, rruleText (DTSTART/UNTIL). Not converted: rule (form settings).
+ */
+public final class ScheduleTimezoneUtil {
+
+    private static final ObjectMapper MAPPER = JsonMapper.builder().build();
+    private static final DateTimeFormatter UTC_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'");
+    private static final DateTimeFormatter RRULE_FORMAT = DateTimeFormatter.ofPattern("yyyyMMdd'T'HHmmss");
+    private static final Pattern RRULE_DATE = Pattern.compile("(DTSTART:|UNTIL=)(\\d{8}T\\d{6})Z?");
+
+    private ScheduleTimezoneUtil() {
+    }
+
+    // ---------- upsert: UI local -> UTC (in place). A trailing Z from the UI is ignored.
+
+    public static void schedulesToUtc(JsonNode schedules, String timezone) {
+        for (JsonNode schedule : schedules) {
+            ObjectNode scheduleJson = (ObjectNode) schedule.get("scheduleJson");
+            scheduleJson.put("rruleText", convertRrule(scheduleJson.get("rruleText").asText(), timezone, true));
+            datesToUtc(schedule.get("datesJson"), timezone);
+        }
+    }
+
+    public static void datesToUtc(JsonNode dates, String timezone) {
+        convertDates(dates, value -> toUtc(value, timezone));
+    }
+
+    // ---------- get: DB UTC -> local
+
+    public static JsonNode datesToLocal(Object datesJson, String timezone) {
+        JsonNode dates = MAPPER.readTree(datesJson.toString());
+        convertDates(dates, value -> toLocal(value, timezone));
+        return dates;
+    }
+
+    /** Result set 2 row (keys come from BaseDao.toCamelCase) -> the same shape the UI sends. */
+    public static Map<String, Object> scheduleToLocal(Map<String, Object> row, String timezone) {
+        Map<String, Object> scheduleJson = new LinkedHashMap<>();
+        scheduleJson.put("rule", MAPPER.readTree(row.get("ruleJSON").toString())); // form settings, never converted
+        scheduleJson.put("rruleText", convertRrule(row.get("rRuleText").toString(), timezone, false));
+
+        Map<String, Object> schedule = new LinkedHashMap<>();
+        schedule.put("id", row.get("amenityScheduleId"));
+        schedule.put("name", row.get("scheduleName"));
+        schedule.put("scheduleJson", scheduleJson);
+        schedule.put("datesJson", datesToLocal(row.get("datesJSON"), timezone));
+        return schedule;
+    }
+
+    // ---------- helpers
+
+    private static void convertDates(JsonNode dates, UnaryOperator<String> convert) {
+        for (JsonNode node : dates) {
+            ObjectNode date = (ObjectNode) node;
+            date.put("startDateTime", convert.apply(date.get("startDateTime").asText()));
+            date.put("endDateTime", convert.apply(date.get("endDateTime").asText()));
+        }
+    }
+
+    private static String toUtc(String local, String timezone) {
+        LocalDateTime dateTime = LocalDateTime.parse(local.replace("Z", ""));
+        if (TimezoneConverter.isInDstGap(dateTime, timezone)) {
+            throw new BadRequestException(dateTime + " does not exist in " + timezone
+                    + " because of daylight saving. Please choose a different time.");
+        }
+        return TimezoneConverter.toUtc(dateTime, timezone).format(UTC_FORMAT);
+    }
+
+    private static String toLocal(String utc, String timezone) {
+        return TimezoneConverter.toLocal(LocalDateTime.parse(utc.replace("Z", "")), timezone)
+                .format(DateTimeFormatter.ISO_LOCAL_DATE_TIME);
+    }
+
+    /** Rewrites DTSTART / UNTIL inside rruleText. */
+    private static String convertRrule(String rrule, String timezone, boolean toUtc) {
+        Matcher matcher = RRULE_DATE.matcher(rrule);
+        StringBuilder out = new StringBuilder();
+        while (matcher.find()) {
+            LocalDateTime value = LocalDateTime.parse(matcher.group(2), RRULE_FORMAT);
+            String converted = toUtc
+                    ? TimezoneConverter.toUtc(value, timezone).format(RRULE_FORMAT) + "Z"
+                    : TimezoneConverter.toLocal(value, timezone).format(RRULE_FORMAT);
+            matcher.appendReplacement(out, matcher.group(1) + converted);
+        }
+        matcher.appendTail(out);
+        return out.toString();
+    }
+}
+
+
+
