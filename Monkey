@@ -411,3 +411,25 @@ private static JsonNode toArray(JsonNode node, String field) {
 }
 
 
+
+/** Result set 2 row (keys from BaseDao.toCamelCase: Rule_JSON -> ruleJson, RRule_Text -> rruleText) -> the UI shape. */
+public static Map<String, Object> scheduleToLocal(Map<String, Object> row, String timezone) {
+    Object ruleJson = row.get("ruleJson");
+    Object rruleText = row.get("rruleText");
+
+    JsonNode rule = ruleJson == null ? null : MAPPER.readTree(ruleJson.toString());
+    convertRule(rule, value -> toLocal(value, timezone));
+
+    Map<String, Object> scheduleJson = new LinkedHashMap<>();
+    scheduleJson.put("rule", rule);
+    scheduleJson.put("rruleText", rruleText == null ? null : convertRrule(rruleText.toString(), timezone, false));
+
+    Map<String, Object> schedule = new LinkedHashMap<>();
+    schedule.put("id", row.get("amenityScheduleId"));
+    schedule.put("name", row.get("scheduleName"));
+    schedule.put("scheduleJson", scheduleJson);
+    schedule.put("datesJson", datesToLocal(row.get("datesJson"), timezone));
+    return schedule;
+}
+
+
