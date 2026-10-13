@@ -367,3 +367,30 @@ public final class ScheduleTimezoneUtil {
     }
 }
 
+
+
+mutation {
+  upsertAmenitySchedule(request: {
+    type: "client", amenityId: 242, locationId: 1, locationFunctionId: 411,
+    schedules: [{
+      id: null, name: "Local Breakfast",
+      scheduleJson: {
+        rule: { startDate: "2026-10-20", startTime: "08:00", endDate: "2026-10-20", endTime: "09:00",
+                frequency: "DAILY", interval: 1, daysOfWeek: [], recurrenceEndMode: "ON_DATE", recurrenceEndDate: "2026-10-22" },
+        rruleText: "DTSTART:20261020T080000\nRRULE:INTERVAL=1;FREQ=DAILY;UNTIL=20261022T235900"
+      },
+      datesJson: [
+        { startDateTime: "2026-10-20T08:00:00", endDateTime: "2026-10-20T09:00:00" },
+        { startDateTime: "2026-10-21T08:00:00", endDateTime: "2026-10-21T09:00:00" },
+        { startDateTime: "2026-10-22T08:00:00", endDateTime: "2026-10-22T09:00:00" }
+      ]
+    }],
+    allAmenityScheduleDates: [
+      { startDateTime: "2026-10-20T08:00:00", endDateTime: "2026-10-20T09:00:00" },
+      { startDateTime: "2026-10-21T08:00:00", endDateTime: "2026-10-21T09:00:00" },
+      { startDateTime: "2026-10-22T08:00:00", endDateTime: "2026-10-22T09:00:00" }
+    ]
+  }) { success message data }
+}
+
+
