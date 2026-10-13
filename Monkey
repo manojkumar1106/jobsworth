@@ -394,3 +394,20 @@ mutation {
 }
 
 
+/** Accepts a JSON array, or the same array sent as a JSON string (Postman ARG boxes, JSON.stringify). */
+private static JsonNode toArray(JsonNode node, String field) {
+    JsonNode array = node;
+    if (node != null && node.isTextual()) {
+        try {
+            array = MAPPER.readTree(node.asText());
+        } catch (JacksonException e) {
+            throw new BadRequestException(field + " is not valid JSON: " + e.getOriginalMessage());
+        }
+    }
+    if (array == null || !array.isArray()) {
+        throw new BadRequestException(field + " must be a JSON array");
+    }
+    return array;
+}
+
+
