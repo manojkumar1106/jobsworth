@@ -42,3 +42,19 @@ async function postCustomerData(method: string, endpoint: string, request: any, 
 
  context.logger.info("Outgoing headers", { headers, tenantId: context.tenantId }); 
 
+
+
+
+async function postCustomerData(method: string, endpoint: string, request: any, context: any) {
+  const baseUrl = process.env.SPRINGBOOT_BASE_ENDPOINT;
+  const url = `${baseUrl}/public/auth/${endpoint}`;
+
+  const headers: any = { "Content-Type": "application/json" };
+  const tenantId = context.tenantId ?? context.req?.headers?.["x-tenant-id"];
+  if (tenantId) headers["x-tenant-id"] = tenantId;
+
+  context.logger.info("Outgoing headers", { headers, tenantId: context.tenantId }); // <-- add this
+
+  return await httpClient(url, { method, headers, body: method === "GET" ? undefined : request }, context.logger, context);
+}
+
