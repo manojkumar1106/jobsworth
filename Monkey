@@ -12,3 +12,29 @@ date.put("endDateTime", convert.apply(date.get("endDateTime").asString()));
 // lines 120, 121 (convertDateTimePair)
 String time = rule.get(timeKey).asString();
 String converted = convert.apply(rule.get(dateKey).asString() + "T" + (time.length() == 5 ? time + ":00" : time));
+
+
+
+async function postCustomerData(method: string, endpoint: string, request: any, context: any) {
+  const baseUrl = process.env.SPRINGBOOT_BASE_ENDPOINT;
+  const url = `${baseUrl}/public/auth/${endpoint}`;
+
+  const headers: any = {
+    "Content-Type": "application/json",
+  };
+  const tenantId = context.tenantId ?? context.req?.headers?.["x-tenant-id"];
+  if (tenantId) {
+    headers["x-tenant-id"] = tenantId;
+  }
+
+  return await httpClient(
+    url,
+    {
+      method,
+      headers,
+      body: method === "GET" ? undefined : request,
+    },
+    context.logger,
+    context
+  );
+}
