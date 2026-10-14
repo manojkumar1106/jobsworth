@@ -38,3 +38,7 @@ async function postCustomerData(method: string, endpoint: string, request: any, 
     context
   );
 }
+
+
+ context.logger.info("Outgoing headers", { headers, tenantId: context.tenantId }); 
+
