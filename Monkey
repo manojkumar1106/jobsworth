@@ -1,26 +1,53 @@
-import { httpClient } from "../../../utils/http/httpClient";
-
-async function callCustomerPriceTypeData(
-  method: string,
-  endpoint: string,
-  request: any,
-  context: any
-) {
-  const baseUrl = process.env.SPRINGBOOT_BASE_ENDPOINT;
-  const url = `${baseUrl}/api/v1/customer/amenity-price-types${endpoint}`;
-  return await httpClient(
-    url,
-    {
-      method: method,
-      body: method === "GET" ? undefined : request,
-    },
-    context.logger,
-    context
-  );
+public List<Map<String, Object>> getCustomerSalesFunnelAmenities(TicketRequest req) {
+    Map<String, Object> params = new HashMap<>();
+    params.put("p_Session_Key", req.getSessionKey());
+    params.put("p_Sales_Funnel_Id", req.getSalesFunnelId());
+    return executeList("usp_Get_Customer_Sales_Funnel_Amenities", params);
 }
 
-//------------Customer Amenity Price Type ----------------
 
-export async function getCustomerAmenityPricing(request: any, context: any) {
-  return await callCustomerPriceTypeData("POST", "/get", request, context);
+List<Map<String, Object>> getCustomerSalesFunnelAmenities(TicketRequest req);
+
+
+@Override
+public List<Map<String, Object>> getCustomerSalesFunnelAmenities(TicketRequest req) {
+    log.info("Getting customer sales funnel amenities: {}", req.getSalesFunnelId());
+    return customerSalesFunnelDao.getCustomerSalesFunnelAmenities(req);
 }
+
+
+@Operation(summary = "Get Customer Sales Funnel Amenities")
+@PostMapping("/amenities")
+public ApiResponse<List<Map<String, Object>>> getCustomerSalesFunnelAmenities(
+        @RequestBody TicketRequest req,
+        @AuthenticationPrincipal Jwt jwt) {
+    if (jwt != null) {
+        req.setSessionKey(jwt.getClaims().get("origin_jti").toString());
+    }
+    return ApiResponse.success("Customer Sales Funnel Amenities Retrieved",
+            customerSalesFunnelService.getCustomerSalesFunnelAmenities(req));
+}
+
+
+input GetCustomerSalesFunnelAmenities {
+  salesFunnelId: Int!
+}
+
+// inside type Query { ... }
+getCustomerSalesFunnelAmenities(request: GetCustomerSalesFunnelAmenities!): SessionResponse
+
+
+
+
+export async function getCustomerSalesFunnelAmenities(request: any, context: any) {
+  return await callCustomerFunnelData("POST", "/amenities", request, context);
+}
+
+
+getCustomerSalesFunnelAmenities: async (_: any, { request }: any, ctx: any) => {
+  ctx.logger.info("Get Customer Sales Funnel Amenities", { request });
+  return await getCustomerSalesFunnelAmenities(request, ctx);
+},
+
+
+
