@@ -1,95 +1,26 @@
-@Repository
-public class CustomerAmenityPricingDao extends BaseDao {
-
-    public List<Map<String, Object>> getAmenityPricing(TicketRequest req) {
-        Map<String, Object> params = new HashMap<>();
-        params.put("p_Session_Key", req.getSessionKey());
-        params.put("p_Amenity_Id", req.getAmenityId());
-        return executeList("usp_Get_Customer_Amenity_Pricing", params);
-    }
-}
-
-
-
-public interface ICustomerAmenityPricingService {
-    List<Map<String, Object>> getAmenityPricing(TicketRequest req);
-}
-
-
-
-@Service
-@Slf4j
-public class CustomerAmenityPricingService implements ICustomerAmenityPricingService {
-
-    @Autowired
-    private CustomerAmenityPricingDao customerAmenityPricingDao;
-
-    @Override
-    public List<Map<String, Object>> getAmenityPricing(TicketRequest req) {
-        log.info("Getting customer amenity pricing: {}", req.getAmenityId());
-        return customerAmenityPricingDao.getAmenityPricing(req);
-    }
-}
-
-
-@RestController
-@RequestMapping("/api/v1/customer/amenities")
-@Tag(name = "Customer Amenity Pricing", description = "Amenity pricing for customer web")
-public class CustomerAmenityPricingController {
-
-    @Autowired
-    private ICustomerAmenityPricingService customerAmenityPricingService;
-
-    @Operation(summary = "Get Customer Amenity Pricing")
-    @PostMapping("/pricing")
-    public ApiResponse<List<Map<String, Object>>> getAmenityPricing(
-            @RequestBody TicketRequest req,
-            @AuthenticationPrincipal Jwt jwt) {
-        if (jwt != null) {
-            req.setSessionKey(jwt.getClaims().get("origin_jti").toString());
-        }
-        return ApiResponse.success("Customer Amenity Pricing Retrieved",
-                customerAmenityPricingService.getAmenityPricing(req));
-    }
-}
-
-
-
-export const customerAmenityPricingTypeDefs = `
-  input GetCustomerAmenityPricing {
-    amenityId: Int!
-  }
-
-  type Query {
-    getCustomerAmenityPricing(request: GetCustomerAmenityPricing!): SessionResponse
-  }
-`;
-
-
-
 import { httpClient } from "../../../utils/http/httpClient";
 
-export async function getCustomerAmenityPricing(request: any, context: any) {
+async function callCustomerPriceTypeData(
+  method: string,
+  endpoint: string,
+  request: any,
+  context: any
+) {
   const baseUrl = process.env.SPRINGBOOT_BASE_ENDPOINT;
-  const url = `${baseUrl}/api/v1/customer/amenities/pricing`;
+  const url = `${baseUrl}/api/v1/customer/amenity-price-types${endpoint}`;
   return await httpClient(
     url,
-    { method: "POST", body: request },
+    {
+      method: method,
+      body: method === "GET" ? undefined : request,
+    },
     context.logger,
     context
   );
 }
 
+//------------Customer Amenity Price Type ----------------
 
-import { getCustomerAmenityPricing } from "../../../service/customer/amenities/amenityPricingService";
-
-export const customerAmenityPricingResolvers = {
-  Query: {
-    getCustomerAmenityPricing: async (_: any, { request }: any, ctx: any) => {
-      ctx.logger.info("Get Customer Amenity Pricing", { request });
-      return await getCustomerAmenityPricing(request, ctx);
-    },
-  },
-};
-
-
+export async function getCustomerAmenityPricing(request: any, context: any) {
+  return await callCustomerPriceTypeData("POST", "/get", request, context);
+}
