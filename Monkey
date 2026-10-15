@@ -1,60 +1,292 @@
-// line 38
-scheduleJson.put("rruleText", convertRrule(scheduleJson.get("rruleText").asString(), timezone, true));
+package com.hlt.api.util;
 
-// lines 87, 89 (toArray)
-if (node != null && node.isString()) {
-    array = MAPPER.readTree(node.asString());
+import com.hlt.api.exception.BadRequestException;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
+import tools.jackson.databind.node.ObjectNode;
 
-// lines 103, 104 (convertDates)
-date.put("startDateTime", convert.apply(date.get("startDateTime").asString()));
-date.put("endDateTime", convert.apply(date.get("endDateTime").asString()));
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.function.UnaryOperator;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
-// lines 120, 121 (convertDateTimePair)
-String time = rule.get(timeKey).asString();
-String converted = convert.apply(rule.get(dateKey).asString() + "T" + (time.length() == 5 ? time + ":00" : time));
+/**
+ * Amenity schedule JSON <-> UTC. All zone math is TimezoneConverter; this class only walks the JSON.
+ * Converted: datesJson, allAmenityScheduleDates, rruleText (DTSTART/UNTIL), rule (startDate+startTime, endDate+endTime).
+ */
+public final class ScheduleTimezoneUtil {
 
+    private static final ObjectMapper MAPPER = JsonMapper.builder().build();
+    private static final DateTimeFormatter UTC_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'");
+    private static final DateTimeFormatter RRULE_FORMAT = DateTimeFormatter.ofPattern("yyyyMMdd'T'HHmmss");
+    private static final Pattern RRULE_DATE = Pattern.compile("(DTSTART:|UNTIL=)(\\d{8}T\\d{6})Z?");
 
+    private ScheduleTimezoneUtil() {
+    }
 
-async function postCustomerData(method: string, endpoint: string, request: any, context: any) {
-  const baseUrl = process.env.SPRINGBOOT_BASE_ENDPOINT;
-  const url = `${baseUrl}/public/auth/${endpoint}`;
+    // ---------- upsert: UI local -> UTC. Returns the converted array. A trailing Z from the UI is ignored.
 
-  const headers: any = {
-    "Content-Type": "application/json",
-  };
-  const tenantId = context.tenantId ?? context.req?.headers?.["x-tenant-id"];
-  if (tenantId) {
-    headers["x-tenant-id"] = tenantId;
-  }
+    public static JsonNode schedulesToUtc(JsonNode input, String timezone) {
+        JsonNode schedules = toArray(input, "schedules");
+        for (JsonNode schedule : schedules) {
+            ObjectNode scheduleJson = (ObjectNode) schedule.get("scheduleJson");
+            scheduleJson.put("rruleText", convertRrule(scheduleJson.get("rruleText").asString(), timezone, true));
+            convertRule(scheduleJson.get("rule"), value -> toUtc(value, timezone));
+            convertDates(schedule.get("datesJson"), value -> toUtc(value, timezone));
+        }
+        return schedules;
+    }
 
-  return await httpClient(
-    url,
-    {
-      method,
-      headers,
-      body: method === "GET" ? undefined : request,
-    },
-    context.logger,
-    context
-  );
+    public static JsonNode datesToUtc(JsonNode input, String timezone) {
+        JsonNode dates = toArray(input, "allAmenityScheduleDates");
+        convertDates(dates, value -> toUtc(value, timezone));
+        return dates;
+    }
+
+    // ---------- get: DB UTC -> local
+
+    public static JsonNode datesToLocal(Object datesJson, String timezone) {
+        return convertStoredDates(datesJson, value -> toLocal(value, timezone));
+    }
+
+    /** Client UI: venue wall time without offset ("2026-10-20T08:00:00"). */
+    public static Map<String, Object> scheduleToLocal(Map<String, Object> row, String timezone) {
+        return scheduleFromRow(row, timezone, value -> toLocal(value, timezone));
+    }
+
+    // ---------- customer website: venue time WITH offset ("2026-10-20T08:00:00-04:00")
+
+    public static JsonNode datesToVenue(Object datesJson, String timezone) {
+        return convertStoredDates(datesJson, value -> CustomerTimeUtil.utcToVenue(value, timezone));
+    }
+
+    public static Map<String, Object> scheduleToVenue(Map<String, Object> row, String timezone) {
+        return scheduleFromRow(row, timezone, value -> CustomerTimeUtil.utcToVenue(value, timezone));
+    }
+
+    /** Result set 2 row (keys from BaseDao.toCamelCase) -> the UI shape. rule / rruleText are venue wall time. */
+    private static Map<String, Object> scheduleFromRow(Map<String, Object> row, String timezone,
+                                                       UnaryOperator<String> dateConverter) {
+        Object ruleJson = row.get("ruleJson");
+        Object rruleText = row.get("rruleText");
+
+        JsonNode rule = ruleJson == null ? null : MAPPER.readTree(ruleJson.toString());
+        convertRule(rule, value -> toLocal(value, timezone));
+
+        Map<String, Object> scheduleJson = new LinkedHashMap<>();
+        scheduleJson.put("rule", rule);
+        scheduleJson.put("rruleText", rruleText == null ? null : convertRrule(rruleText.toString(), timezone, false));
+
+        Map<String, Object> schedule = new LinkedHashMap<>();
+        schedule.put("id", row.get("amenityScheduleId"));
+        schedule.put("name", row.get("scheduleName"));
+        schedule.put("scheduleJson", scheduleJson);
+        schedule.put("datesJson", convertStoredDates(row.get("datesJson"), dateConverter));
+        return schedule;
+    }
+
+    private static JsonNode convertStoredDates(Object datesJson, UnaryOperator<String> converter) {
+        if (datesJson == null) {
+            return MAPPER.createArrayNode();
+        }
+        JsonNode dates = MAPPER.readTree(datesJson.toString());
+        convertDates(dates, converter);
+        return dates;
+    }
+
+    // ---------- helpers
+
+    /** Accepts a JSON array, or the same array sent as a JSON string (Postman ARG boxes, JSON.stringify). */
+    private static JsonNode toArray(JsonNode node, String field) {
+        JsonNode array = node;
+        if (node != null && node.isString()) {
+            try {
+                array = MAPPER.readTree(node.asString());
+            } catch (JacksonException e) {
+                throw new BadRequestException(field + " is not valid JSON: " + e.getOriginalMessage());
+            }
+        }
+        if (array == null || !array.isArray()) {
+            throw new BadRequestException(field + " must be a JSON array");
+        }
+        return array;
+    }
+
+    private static void convertDates(JsonNode dates, UnaryOperator<String> convert) {
+        for (JsonNode node : dates) {
+            ObjectNode date = (ObjectNode) node;
+            date.put("startDateTime", convert.apply(date.get("startDateTime").asString()));
+            date.put("endDateTime", convert.apply(date.get("endDateTime").asString()));
+        }
+    }
+
+    /** rule: startDate+startTime and endDate+endTime are converted as pairs (a time alone has no date for DST). */
+    private static void convertRule(JsonNode rule, UnaryOperator<String> convert) {
+        if (rule instanceof ObjectNode ruleNode) {
+            convertDateTimePair(ruleNode, "startDate", "startTime", convert);
+            convertDateTimePair(ruleNode, "endDate", "endTime", convert);
+        }
+    }
+
+    private static void convertDateTimePair(ObjectNode rule, String dateKey, String timeKey, UnaryOperator<String> convert) {
+        if (!rule.hasNonNull(dateKey) || !rule.hasNonNull(timeKey)) {
+            return;
+        }
+        String time = rule.get(timeKey).asString();
+        String converted = convert.apply(rule.get(dateKey).asString() + "T" + (time.length() == 5 ? time + ":00" : time));
+        rule.put(dateKey, converted.substring(0, 10));   // yyyy-MM-dd
+        rule.put(timeKey, converted.substring(11, 16));  // HH:mm
+    }
+
+    private static String toUtc(String local, String timezone) {
+        LocalDateTime dateTime = LocalDateTime.parse(local.replace("Z", ""));
+        if (TimezoneConverter.isInDstGap(dateTime, timezone)) {
+            throw new BadRequestException(dateTime + " does not exist in " + timezone
+                    + " because of daylight saving. Please choose a different time.");
+        }
+        return TimezoneConverter.toUtc(dateTime, timezone).format(UTC_FORMAT);
+    }
+
+    private static String toLocal(String utc, String timezone) {
+        return TimezoneConverter.toLocal(LocalDateTime.parse(utc.replace("Z", "")), timezone)
+                .format(DateTimeFormatter.ISO_LOCAL_DATE_TIME);
+    }
+
+    /** Rewrites DTSTART / UNTIL inside rruleText. */
+    private static String convertRrule(String rrule, String timezone, boolean toUtc) {
+        Matcher matcher = RRULE_DATE.matcher(rrule);
+        StringBuilder out = new StringBuilder();
+        while (matcher.find()) {
+            LocalDateTime value = LocalDateTime.parse(matcher.group(2), RRULE_FORMAT);
+            String converted = toUtc
+                    ? TimezoneConverter.toUtc(value, timezone).format(RRULE_FORMAT) + "Z"
+                    : TimezoneConverter.toLocal(value, timezone).format(RRULE_FORMAT);
+            matcher.appendReplacement(out, matcher.group(1) + converted);
+        }
+        matcher.appendTail(out);
+        return out.toString();
+    }
 }
 
 
- context.logger.info("Outgoing headers", { headers, tenantId: context.tenantId }); 
 
 
+package com.hlt.api.util;
 
+import com.hlt.api.exception.BadRequestException;
 
-async function postCustomerData(method: string, endpoint: string, request: any, context: any) {
-  const baseUrl = process.env.SPRINGBOOT_BASE_ENDPOINT;
-  const url = `${baseUrl}/public/auth/${endpoint}`;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
 
-  const headers: any = { "Content-Type": "application/json" };
-  const tenantId = context.tenantId ?? context.req?.headers?.["x-tenant-id"];
-  if (tenantId) headers["x-tenant-id"] = tenantId;
+/**
+ * Customer website time rules. The venue timezone always comes from the database (Location.Timezone),
+ * never from the customer's browser.
+ *
+ *   DB -> UI   : UTC "2026-10-20T12:00:00.000Z"  ->  venue time WITH offset "2026-10-20T08:00:00-04:00"
+ *   UI -> DB   : "2026-10-20T08:00:00-04:00"     ->  UTC "2026-10-20T12:00:00.000Z"  (no timezone lookup needed)
+ *   Plain dates: "2026-10-20" stays a venue calendar date. Never converted.
+ *   Day rules  : venueToday / venueNow give the venue's "today" and "now" for cutoffs and same-day checks.
+ */
+public final class CustomerTimeUtil {
 
-  context.logger.info("Outgoing headers", { headers, tenantId: context.tenantId }); // <-- add this
+    public static final DateTimeFormatter UTC_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'");
+    private static final DateTimeFormatter VENUE_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ssXXX");
 
-  return await httpClient(url, { method, headers, body: method === "GET" ? undefined : request }, context.logger, context);
+    private CustomerTimeUtil() {
+    }
+
+    // ================================================================ DB (UTC) -> customer UI
+
+    /** "2026-10-20T12:00:00.000Z" -> "2026-10-20T08:00:00-04:00" (venue wall time + its offset on that date). */
+    public static String utcToVenue(String utc, String timezone) {
+        if (utc == null || utc.isBlank()) {
+            return utc;
+        }
+        LocalDateTime utcDateTime = LocalDateTime.parse(utc.replace("Z", ""));
+        return utcDateTime.atOffset(ZoneOffset.UTC)
+                .atZoneSameInstant(ZoneId.of(timezone))
+                .toOffsetDateTime()
+                .format(VENUE_FORMAT);
+    }
+
+    // ================================================================ customer UI -> DB (UTC)
+
+    /**
+     * Customer input -> UTC for the DB.
+     *   With offset ("2026-10-20T08:00:00-04:00"): converted exactly, timezone not needed.
+     *   Without offset ("2026-10-20T08:00:00"):   treated as venue time; rejected if it falls in the DST gap.
+     */
+    public static String toUtc(String value, String timezone) {
+        if (value == null || value.isBlank()) {
+            throw new BadRequestException("Date time is required");
+        }
+        try {
+            if (hasOffset(value)) {
+                return OffsetDateTime.parse(value).withOffsetSameInstant(ZoneOffset.UTC).format(UTC_FORMAT);
+            }
+            LocalDateTime local = LocalDateTime.parse(value.replace("Z", ""));
+            if (TimezoneConverter.isInDstGap(local, timezone)) {
+                throw new BadRequestException(local + " does not exist in " + timezone
+                        + " because of daylight saving. Please choose a different time.");
+            }
+            return TimezoneConverter.toUtc(local, timezone).format(UTC_FORMAT);
+        } catch (DateTimeParseException e) {
+            throw new BadRequestException("Invalid date time: " + value);
+        }
+    }
+
+    /** A venue calendar day as a UTC range [start, end) for availability search. */
+    public static String[] venueDayToUtcRange(String venueDate, String timezone) {
+        LocalDate day = parseDate(venueDate);
+        ZoneId zone = ZoneId.of(timezone);
+        String start = day.atStartOfDay(zone).withZoneSameInstant(ZoneOffset.UTC).format(UTC_FORMAT);
+        String end = day.plusDays(1).atStartOfDay(zone).withZoneSameInstant(ZoneOffset.UTC).format(UTC_FORMAT);
+        return new String[]{start, end};
+    }
+
+    // ================================================================ plain dates (never converted)
+
+    /** "2026-10-20" is a venue calendar date (visit date, validity date). Validated only, never shifted. */
+    public static LocalDate parseDate(String venueDate) {
+        try {
+            return LocalDate.parse(venueDate);
+        } catch (DateTimeParseException | NullPointerException e) {
+            throw new BadRequestException("Invalid date: " + venueDate);
+        }
+    }
+
+    // ================================================================ venue "today" / "now"
+
+    /** The venue's calendar date right now (11:30 PM in New York is still "today" there). */
+    public static LocalDate venueToday(String timezone) {
+        return ZonedDateTime.now(ZoneId.of(timezone)).toLocalDate();
+    }
+
+    /** The venue's wall clock right now. */
+    public static LocalDateTime venueNow(String timezone) {
+        return ZonedDateTime.now(ZoneId.of(timezone)).toLocalDateTime();
+    }
+
+    /** true when the UTC slot start is still in the future (for "book until" / "cancel before" rules). */
+    public static boolean isBeforeUtc(String utcStart, long minutesBefore) {
+        OffsetDateTime start = LocalDateTime.parse(utcStart.replace("Z", "")).atOffset(ZoneOffset.UTC);
+        return OffsetDateTime.now(ZoneOffset.UTC).plusMinutes(minutesBefore).isBefore(start);
+    }
+
+    /** "...-04:00" / "...+05:30" carry an offset; a trailing Z from the UI is treated as venue time (same rule as client side). */
+    private static boolean hasOffset(String value) {
+        int sign = value.length() - 6;
+        return sign > 10 && (value.charAt(sign) == '+' || value.charAt(sign) == '-') && value.charAt(sign + 3) == ':';
+    }
 }
-
