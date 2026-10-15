@@ -139,3 +139,28 @@ export const customerSalesFunnelResolvers = {
 };
 
 
+
+export const customerSalesFunnelTypeDefs = `
+  type CustomerSalesFunnel {
+    salesFunnelId: Int!
+    salesFunnelName: String!
+  }
+
+  type CustomerSalesFunnelDetails {
+    salesFunnelId: Int!
+    urlSlug: String
+    isDateRequired: Boolean!
+    salesCutoffLocalTime: String
+  }
+
+  input GetCustomerSalesFunnelDetails {
+    salesFunnelId: Int!
+  }
+
+  type Query {
+    getCustomerSalesFunnel: [CustomerSalesFunnel]
+    getCustomerSalesFunnelDetails(request: GetCustomerSalesFunnelDetails!): CustomerSalesFunnelDetails
+  }
+`;
+
+
