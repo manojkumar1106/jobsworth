@@ -1,124 +1,3 @@
-import { httpClient } from "../../../utils/http/httpClient";
-
-async function callCustomerFunnelData(method: string, endpoint: string, request: any, context: any) {
-  const baseUrl = process.env.SPRINGBOOT_BASE_ENDPOINT;
-  const url = `${baseUrl}/api/v1/customer/funnels${endpoint}`;
-  return await httpClient(
-    url,
-    { method, body: method === "GET" ? undefined : request },
-    context.logger,
-    context
-  );
-}
-
-export async function getCustomerSalesFunnel(request: any, context: any) {
-  return await callCustomerFunnelData("GET", "/get", request, context);
-}
-export async function getCustomerSalesFunnelDetails(request: any, context: any) {
-  return await callCustomerFunnelData("POST", "/details", request, context);
-}
-export async function getCustomerSalesFunnelAmenities(request: any, context: any) {
-  return await callCustomerFunnelData("POST", "/amenities", request, context);
-}
-
-
-
-import { httpClient } from "../../../utils/http/httpClient";
-
-async function callCustomerPriceTypeData(method: string, endpoint: string, request: any, context: any) {
-  const baseUrl = process.env.SPRINGBOOT_BASE_ENDPOINT;
-  const url = `${baseUrl}/api/v1/customer/amenity-price-types${endpoint}`;
-  return await httpClient(
-    url,
-    { method, body: method === "GET" ? undefined : request },
-    context.logger,
-    context
-  );
-}
-
-export async function getCustomerAmenityPricing(request: any, context: any) {
-  return await callCustomerPriceTypeData("POST", "/get", request, context);
-}
-
-
-
-
-export const customerPriceTypeTypeDefs = `
-  type CustomerAmenityPriceType {
-    amenityPriceTypeId: Int
-    amenityPriceTypeName: String
-    amenityPriceTypeBasePrice: Float
-    amenityPriceTypeDescription: String
-  }
-
-  input GetCustomerAmenityPricing { amenityId: Int! }
-
-  type Query {
-    getCustomerAmenityPricing(request: GetCustomerAmenityPricing!): [CustomerAmenityPriceType]
-  }
-`;
-
-
-
-
-
-import { getCustomerAmenityPricing } from "../../../service/customer/pricetypes/priceTypeService";
-
-export const customerPriceTypeResolvers = {
-  Query: {
-    getCustomerAmenityPricing: async (_: any, { request }: any, ctx: any) =>
-      (await getCustomerAmenityPricing(request, ctx))?.data ?? [],
-  },
-};
-
-
-
-export const customerSalesFunnelTypeDefs = `
-  type CustomerScheduleDate {
-    startDateTime: String
-    endDateTime: String
-  }
-
-  type CustomerFunnelAmenity {
-    funnelOrder: Int
-    amenityId: Int!
-    amenityName: String
-    amenityDescription: String
-    amenityTypeId: Int
-    amenityTypeName: String
-    amenityTimezone: String
-    allAmenityScheduleDates: [CustomerScheduleDate]
-    pricing: [CustomerAmenityPriceType]
-  }
-
-  type CustomerSalesFunnelDetails {
-    salesFunnelId: Int
-    urlSlug: String
-    isDateRequired: Boolean
-    salesCutoffLocalTime: String
-  }
-
-  type CustomerSalesFunnel {
-    salesFunnelId: Int!
-    salesFunnelName: String
-    details: CustomerSalesFunnelDetails
-    amenities: [CustomerFunnelAmenity]
-  }
-
-  input GetCustomerSalesFunnelDetails { salesFunnelId: Int! }
-  input GetCustomerSalesFunnelAmenities { salesFunnelId: Int! }
-
-  type Query {
-    getCustomerSalesFunnel: [CustomerSalesFunnel]
-    getCustomerSalesFunnelById(request: GetCustomerSalesFunnelDetails!): CustomerSalesFunnel
-    getCustomerSalesFunnelDetails(request: GetCustomerSalesFunnelDetails!): CustomerSalesFunnelDetails
-    getCustomerSalesFunnelAmenities(request: GetCustomerSalesFunnelAmenities!): [CustomerFunnelAmenity]
-  }
-`;
-
-
-
-
 import {
   getCustomerSalesFunnel,
   getCustomerSalesFunnelDetails,
@@ -137,47 +16,49 @@ const loadAmenities = async (salesFunnelId: number, ctx: any) =>
 const loadPricing = async (amenityId: number, ctx: any) =>
   unwrap(await getCustomerAmenityPricing({ amenityId }, ctx)) ?? [];
 
+// Looks up one funnel from the list. Cached on the parent so asking for
+// salesFunnelName and urlSlug together only calls the list API once.
+const findFunnel = async (p: any, ctx: any) => {
+  p._funnel ??= loadFunnels(ctx).then(
+    (list: any[]) =>
+      list.find((f) => f.salesFunnelId === p.salesFunnelId) ?? null
+  );
+  return p._funnel;
+};
+
 export const customerSalesFunnelResolvers = {
   Query: {
     getCustomerSalesFunnel: (_: any, __: any, ctx: any) => loadFunnels(ctx),
+
+    // returns only the id; the other fields resolve lazily below
     getCustomerSalesFunnelById: (_: any, { request }: any) => ({
       salesFunnelId: request.salesFunnelId,
     }),
+
     getCustomerSalesFunnelDetails: (_: any, { request }: any, ctx: any) =>
       loadDetails(request.salesFunnelId, ctx),
+
     getCustomerSalesFunnelAmenities: (_: any, { request }: any, ctx: any) =>
       loadAmenities(request.salesFunnelId, ctx),
   },
 
   CustomerSalesFunnel: {
-    salesFunnelName: async (p: any, _: any, ctx: any) => {
-      if (p.salesFunnelName !== undefined) return p.salesFunnelName;
-      const list = await loadFunnels(ctx);
-      return list.find((f: any) => f.salesFunnelId === p.salesFunnelId)?.salesFunnelName ?? null;
-    },
+    salesFunnelName: async (p: any, _: any, ctx: any) =>
+      p.salesFunnelName !== undefined
+        ? p.salesFunnelName
+        : (await findFunnel(p, ctx))?.salesFunnelName ?? null,
+
+    urlSlug: async (p: any, _: any, ctx: any) =>
+      p.urlSlug !== undefined
+        ? p.urlSlug
+        : (await findFunnel(p, ctx))?.urlSlug ?? null,
+
     details: (p: any, _: any, ctx: any) => loadDetails(p.salesFunnelId, ctx),
-    amenities: (p: any, _: any, ctx: any) => loadAmenities(p.salesFunnelId, ctx),
+    amenities: (p: any, _: any, ctx: any) =>
+      loadAmenities(p.salesFunnelId, ctx),
   },
 
   CustomerFunnelAmenity: {
     pricing: (p: any, _: any, ctx: any) => loadPricing(p.amenityId, ctx),
   },
 };
-
-
-
-@Override
-public List<Map<String, Object>> getCustomerSalesFunnelAmenities(TicketRequest req) {
-    List<Map<String, Object>> amenities =
-            customerSalesFunnelDao.getCustomerSalesFunnelAmenities(req);
-    for (Map<String, Object> amenity : amenities) {
-        Object dates = amenity.get("allAmenityScheduleDates");
-        if (dates == null) continue;
-        amenity.put("allAmenityScheduleDates",
-                ScheduleTimezoneUtil.datesToLocal(dates,
-                        String.valueOf(amenity.get("amenityTimezone"))));
-    }
-    return amenities;
-}
-
-
