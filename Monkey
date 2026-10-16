@@ -1,4 +1,49 @@
-export const customerSalesFunnelTypeDefs = `
+import { httpClient } from "../../../utils/http/httpClient";
+
+async function callCustomerFunnelData(method: string, endpoint: string, request: any, context: any) {
+  const baseUrl = process.env.SPRINGBOOT_BASE_ENDPOINT;
+  const url = `${baseUrl}/api/v1/customer/funnels${endpoint}`;
+  return await httpClient(
+    url,
+    { method, body: method === "GET" ? undefined : request },
+    context.logger,
+    context
+  );
+}
+
+export async function getCustomerSalesFunnel(request: any, context: any) {
+  return await callCustomerFunnelData("GET", "/get", request, context);
+}
+export async function getCustomerSalesFunnelDetails(request: any, context: any) {
+  return await callCustomerFunnelData("POST", "/details", request, context);
+}
+export async function getCustomerSalesFunnelAmenities(request: any, context: any) {
+  return await callCustomerFunnelData("POST", "/amenities", request, context);
+}
+
+
+
+import { httpClient } from "../../../utils/http/httpClient";
+
+async function callCustomerPriceTypeData(method: string, endpoint: string, request: any, context: any) {
+  const baseUrl = process.env.SPRINGBOOT_BASE_ENDPOINT;
+  const url = `${baseUrl}/api/v1/customer/amenity-price-types${endpoint}`;
+  return await httpClient(
+    url,
+    { method, body: method === "GET" ? undefined : request },
+    context.logger,
+    context
+  );
+}
+
+export async function getCustomerAmenityPricing(request: any, context: any) {
+  return await callCustomerPriceTypeData("POST", "/get", request, context);
+}
+
+
+
+
+export const customerPriceTypeTypeDefs = `
   type CustomerAmenityPriceType {
     amenityPriceTypeId: Int
     amenityPriceTypeName: String
@@ -6,6 +51,29 @@ export const customerSalesFunnelTypeDefs = `
     amenityPriceTypeDescription: String
   }
 
+  input GetCustomerAmenityPricing { amenityId: Int! }
+
+  type Query {
+    getCustomerAmenityPricing(request: GetCustomerAmenityPricing!): [CustomerAmenityPriceType]
+  }
+`;
+
+
+
+
+
+import { getCustomerAmenityPricing } from "../../../service/customer/pricetypes/priceTypeService";
+
+export const customerPriceTypeResolvers = {
+  Query: {
+    getCustomerAmenityPricing: async (_: any, { request }: any, ctx: any) =>
+      (await getCustomerAmenityPricing(request, ctx))?.data ?? [],
+  },
+};
+
+
+
+export const customerSalesFunnelTypeDefs = `
   type CustomerScheduleDate {
     startDateTime: String
     endDateTime: String
@@ -39,16 +107,15 @@ export const customerSalesFunnelTypeDefs = `
 
   input GetCustomerSalesFunnelDetails { salesFunnelId: Int! }
   input GetCustomerSalesFunnelAmenities { salesFunnelId: Int! }
-  input GetCustomerAmenityPricing { amenityId: Int! }
 
   type Query {
     getCustomerSalesFunnel: [CustomerSalesFunnel]
     getCustomerSalesFunnelById(request: GetCustomerSalesFunnelDetails!): CustomerSalesFunnel
     getCustomerSalesFunnelDetails(request: GetCustomerSalesFunnelDetails!): CustomerSalesFunnelDetails
     getCustomerSalesFunnelAmenities(request: GetCustomerSalesFunnelAmenities!): [CustomerFunnelAmenity]
-    getCustomerAmenityPricing(request: GetCustomerAmenityPricing!): [CustomerAmenityPriceType]
   }
 `;
+
 
 
 
@@ -73,24 +140,16 @@ const loadPricing = async (amenityId: number, ctx: any) =>
 export const customerSalesFunnelResolvers = {
   Query: {
     getCustomerSalesFunnel: (_: any, __: any, ctx: any) => loadFunnels(ctx),
-
-    // returns only the id; every other field resolves lazily below
     getCustomerSalesFunnelById: (_: any, { request }: any) => ({
       salesFunnelId: request.salesFunnelId,
     }),
-
     getCustomerSalesFunnelDetails: (_: any, { request }: any, ctx: any) =>
       loadDetails(request.salesFunnelId, ctx),
-
     getCustomerSalesFunnelAmenities: (_: any, { request }: any, ctx: any) =>
       loadAmenities(request.salesFunnelId, ctx),
-
-    getCustomerAmenityPricing: (_: any, { request }: any, ctx: any) =>
-      loadPricing(request.amenityId, ctx),
   },
 
   CustomerSalesFunnel: {
-    // already present when the parent came from the list; looked up when it came from ById
     salesFunnelName: async (p: any, _: any, ctx: any) => {
       if (p.salesFunnelName !== undefined) return p.salesFunnelName;
       const list = await loadFunnels(ctx);
@@ -104,4 +163,21 @@ export const customerSalesFunnelResolvers = {
     pricing: (p: any, _: any, ctx: any) => loadPricing(p.amenityId, ctx),
   },
 };
+
+
+
+@Override
+public List<Map<String, Object>> getCustomerSalesFunnelAmenities(TicketRequest req) {
+    List<Map<String, Object>> amenities =
+            customerSalesFunnelDao.getCustomerSalesFunnelAmenities(req);
+    for (Map<String, Object> amenity : amenities) {
+        Object dates = amenity.get("allAmenityScheduleDates");
+        if (dates == null) continue;
+        amenity.put("allAmenityScheduleDates",
+                ScheduleTimezoneUtil.datesToLocal(dates,
+                        String.valueOf(amenity.get("amenityTimezone"))));
+    }
+    return amenities;
+}
+
 
