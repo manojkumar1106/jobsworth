@@ -1,53 +1,21 @@
-public List<Map<String, Object>> getCustomerSalesFunnelAmenities(TicketRequest req) {
-    Map<String, Object> params = new HashMap<>();
-    params.put("p_Session_Key", req.getSessionKey());
-    params.put("p_Sales_Funnel_Id", req.getSalesFunnelId());
-    return executeList("usp_Get_Customer_Sales_Funnel_Amenities", params);
-}
-
-
-List<Map<String, Object>> getCustomerSalesFunnelAmenities(TicketRequest req);
-
-
 @Override
 public List<Map<String, Object>> getCustomerSalesFunnelAmenities(TicketRequest req) {
     log.info("Getting customer sales funnel amenities: {}", req.getSalesFunnelId());
-    return customerSalesFunnelDao.getCustomerSalesFunnelAmenities(req);
-}
+    List<Map<String, Object>> amenities =
+            customerSalesFunnelDao.getCustomerSalesFunnelAmenities(req);
 
-
-@Operation(summary = "Get Customer Sales Funnel Amenities")
-@PostMapping("/amenities")
-public ApiResponse<List<Map<String, Object>>> getCustomerSalesFunnelAmenities(
-        @RequestBody TicketRequest req,
-        @AuthenticationPrincipal Jwt jwt) {
-    if (jwt != null) {
-        req.setSessionKey(jwt.getClaims().get("origin_jti").toString());
+    for (Map<String, Object> amenity : amenities) {
+        convertScheduleDatesToLocal(amenity);
     }
-    return ApiResponse.success("Customer Sales Funnel Amenities Retrieved",
-            customerSalesFunnelService.getCustomerSalesFunnelAmenities(req));
+    return amenities;
 }
 
-
-input GetCustomerSalesFunnelAmenities {
-  salesFunnelId: Int!
+private void convertScheduleDatesToLocal(Map<String, Object> amenity) {
+    Object dates = amenity.get("allAmenityScheduleDates");
+    Object timezone = amenity.get("amenityTimezone");
+    if (dates == null || timezone == null) {
+        return; // GA amenities with no schedules come back null
+    }
+    amenity.put("allAmenityScheduleDates",
+            ScheduleTimezoneUtil.datesToLocal(dates, timezone.toString()));
 }
-
-// inside type Query { ... }
-getCustomerSalesFunnelAmenities(request: GetCustomerSalesFunnelAmenities!): SessionResponse
-
-
-
-
-export async function getCustomerSalesFunnelAmenities(request: any, context: any) {
-  return await callCustomerFunnelData("POST", "/amenities", request, context);
-}
-
-
-getCustomerSalesFunnelAmenities: async (_: any, { request }: any, ctx: any) => {
-  ctx.logger.info("Get Customer Sales Funnel Amenities", { request });
-  return await getCustomerSalesFunnelAmenities(request, ctx);
-},
-
-
-
