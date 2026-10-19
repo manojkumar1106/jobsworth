@@ -5,41 +5,55 @@ import {
 } from "../../../service/customer/salesfunnel/customerSalesFunnelService";
 import { getCustomerAmenityPricing } from "../../../service/customer/pricetypes/priceTypeService";
 
-const unwrap = (res: any) => res?.data ?? null;
+const unwrap = (res: any) => {
+  const d = res?.data;
+  return typeof d === "string" ? JSON.parse(d) : d ?? null;
+};
 
-const loadFunnels = async (ctx: any) =>
-  unwrap(await getCustomerSalesFunnel({}, ctx)) ?? [];
-const loadDetails = async (salesFunnelId: number, ctx: any) =>
-  unwrap(await getCustomerSalesFunnelDetails({ salesFunnelId }, ctx));
-const loadAmenities = async (salesFunnelId: number, ctx: any) =>
-  unwrap(await getCustomerSalesFunnelAmenities({ salesFunnelId }, ctx)) ?? [];
-const loadPricing = async (amenityId: number, ctx: any) =>
-  unwrap(await getCustomerAmenityPricing({ amenityId }, ctx)) ?? [];
+// stamps the session key on each returned row so nested resolvers can use it
+const withKey = (rows: any[], sessionKey: string) =>
+  (rows ?? []).map((r) => ({ ...r, sessionKey }));
 
-// Looks up one funnel from the list. Cached on the parent so asking for
-// salesFunnelName and urlSlug together only calls the list API once.
+const loadFunnels = async (sessionKey: string, ctx: any) =>
+  withKey(unwrap(await getCustomerSalesFunnel({ sessionKey }, ctx)) ?? [], sessionKey);
+
+const loadDetails = async (salesFunnelId: number, sessionKey: string, ctx: any) =>
+  unwrap(await getCustomerSalesFunnelDetails({ salesFunnelId, sessionKey }, ctx));
+
+const loadAmenities = async (salesFunnelId: number, sessionKey: string, ctx: any) =>
+  withKey(
+    unwrap(await getCustomerSalesFunnelAmenities({ salesFunnelId, sessionKey }, ctx)) ?? [],
+    sessionKey
+  );
+
+const loadPricing = async (amenityId: number, sessionKey: string, ctx: any) =>
+  unwrap(await getCustomerAmenityPricing({ amenityId, sessionKey }, ctx)) ?? [];
+
+// looks up one funnel from the list; cached on the parent so name + slug
+// together call the list API once
 const findFunnel = async (p: any, ctx: any) => {
-  p._funnel ??= loadFunnels(ctx).then(
-    (list: any[]) =>
-      list.find((f) => f.salesFunnelId === p.salesFunnelId) ?? null
+  p._funnel ??= loadFunnels(p.sessionKey, ctx).then(
+    (list: any[]) => list.find((f) => f.salesFunnelId === p.salesFunnelId) ?? null
   );
   return p._funnel;
 };
 
 export const customerSalesFunnelResolvers = {
   Query: {
-    getCustomerSalesFunnel: (_: any, __: any, ctx: any) => loadFunnels(ctx),
+    getCustomerSalesFunnel: (_: any, { request }: any, ctx: any) =>
+      loadFunnels(request.sessionKey, ctx),
 
-    // returns only the id; the other fields resolve lazily below
+    // returns only id + key; other fields resolve lazily below
     getCustomerSalesFunnelById: (_: any, { request }: any) => ({
       salesFunnelId: request.salesFunnelId,
+      sessionKey: request.sessionKey,
     }),
 
     getCustomerSalesFunnelDetails: (_: any, { request }: any, ctx: any) =>
-      loadDetails(request.salesFunnelId, ctx),
+      loadDetails(request.salesFunnelId, request.sessionKey, ctx),
 
     getCustomerSalesFunnelAmenities: (_: any, { request }: any, ctx: any) =>
-      loadAmenities(request.salesFunnelId, ctx),
+      loadAmenities(request.salesFunnelId, request.sessionKey, ctx),
   },
 
   CustomerSalesFunnel: {
@@ -53,12 +67,15 @@ export const customerSalesFunnelResolvers = {
         ? p.urlSlug
         : (await findFunnel(p, ctx))?.urlSlug ?? null,
 
-    details: (p: any, _: any, ctx: any) => loadDetails(p.salesFunnelId, ctx),
+    details: (p: any, _: any, ctx: any) =>
+      loadDetails(p.salesFunnelId, p.sessionKey, ctx),
+
     amenities: (p: any, _: any, ctx: any) =>
-      loadAmenities(p.salesFunnelId, ctx),
+      loadAmenities(p.salesFunnelId, p.sessionKey, ctx),
   },
 
   CustomerFunnelAmenity: {
-    pricing: (p: any, _: any, ctx: any) => loadPricing(p.amenityId, ctx),
+    pricing: (p: any, _: any, ctx: any) =>
+      loadPricing(p.amenityId, p.sessionKey, ctx),
   },
 };
