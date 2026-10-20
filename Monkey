@@ -37,3 +37,17 @@ public class SalesCutoffService {
         return now.isBefore(deadline);
     }
 }
+
+
+
+
+
+Map<String, Object> funnel = customerSalesFunnelDao.getCustomerSalesFunnelDetails(req);
+formatCutoffTime(funnel); // or read the cutoff directly
+
+if (!salesCutoffService.isBookingAllowed(
+        String.valueOf(funnel.get("timezone")),
+        String.valueOf(funnel.get("salesCutoffLocalTime")))) {
+    throw new SalesClosedException("Booking cutoff time has passed");
+}
+
