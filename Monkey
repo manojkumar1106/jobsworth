@@ -1,81 +1,39 @@
-import {
-  getCustomerSalesFunnel,
-  getCustomerSalesFunnelDetails,
-  getCustomerSalesFunnelAmenities,
-} from "../../../service/customer/salesfunnel/customerSalesFunnelService";
-import { getCustomerAmenityPricing } from "../../../service/customer/pricetypes/priceTypeService";
+@Override
+public Map<String, Object> getCustomerSalesFunnelDetails(TicketRequest req) {
+    log.info("Getting customer sales funnel details: {}", req.getSalesFunnelId());
+    Map<String, Object> funnel = customerSalesFunnelDao.getCustomerSalesFunnelDetails(req);
+    if (funnel != null) {
+        formatCutoffTime(funnel);
+        funnel.put("bookingAllowed", salesCutoffService.isBookingAllowed(
+                funnel.get("timezone") == null ? null : funnel.get("timezone").toString(),
+                funnel.get("salesCutoffLocalTime") == null ? null : funnel.get("salesCutoffLocalTime").toString()));
+    }
+    return funnel;
+}
 
-const unwrap = (res: any) => {
-  const d = res?.data;
-  return typeof d === "string" ? JSON.parse(d) : d ?? null;
-};
 
-// stamps the session key on each returned row so nested resolvers can use it
-const withKey = (rows: any[], sessionKey: string) =>
-  (rows ?? []).map((r) => ({ ...r, sessionKey }));
 
-const loadFunnels = async (sessionKey: string, ctx: any) =>
-  withKey(unwrap(await getCustomerSalesFunnel({ sessionKey }, ctx)) ?? [], sessionKey);
+@Service
+public class SalesCutoffService {
 
-const loadDetails = async (salesFunnelId: number, sessionKey: string, ctx: any) =>
-  unwrap(await getCustomerSalesFunnelDetails({ salesFunnelId, sessionKey }, ctx));
+    // booking closes this many hours before the cutoff (0 = exactly at cutoff)
+    @Value("${sales.booking.buffer-hours:2}")
+    private long bufferHours;
 
-const loadAmenities = async (salesFunnelId: number, sessionKey: string, ctx: any) =>
-  withKey(
-    unwrap(await getCustomerSalesFunnelAmenities({ salesFunnelId, sessionKey }, ctx)) ?? [],
-    sessionKey
-  );
+    public boolean isBookingAllowed(String timezone, String salesCutoffLocalTime) {
+        if (timezone == null || salesCutoffLocalTime == null) {
+            return false; // fail closed
+        }
 
-const loadPricing = async (amenityId: number, sessionKey: string, ctx: any) =>
-  unwrap(await getCustomerAmenityPricing({ amenityId, sessionKey }, ctx)) ?? [];
+        ZoneId zone = ZoneId.of(timezone);
+        LocalTime cutoff = LocalTime.parse(salesCutoffLocalTime);
 
-// looks up one funnel from the list; cached on the parent so name + slug
-// together call the list API once
-const findFunnel = async (p: any, ctx: any) => {
-  p._funnel ??= loadFunnels(p.sessionKey, ctx).then(
-    (list: any[]) => list.find((f) => f.salesFunnelId === p.salesFunnelId) ?? null
-  );
-  return p._funnel;
-};
+        ZonedDateTime now = ZonedDateTime.now(zone);
+        ZonedDateTime deadline = now.toLocalDate()
+                .atTime(cutoff)
+                .atZone(zone)
+                .minusHours(bufferHours);
 
-export const customerSalesFunnelResolvers = {
-  Query: {
-    getCustomerSalesFunnel: (_: any, { request }: any, ctx: any) =>
-      loadFunnels(request.sessionKey, ctx),
-
-    // returns only id + key; other fields resolve lazily below
-    getCustomerSalesFunnelById: (_: any, { request }: any) => ({
-      salesFunnelId: request.salesFunnelId,
-      sessionKey: request.sessionKey,
-    }),
-
-    getCustomerSalesFunnelDetails: (_: any, { request }: any, ctx: any) =>
-      loadDetails(request.salesFunnelId, request.sessionKey, ctx),
-
-    getCustomerSalesFunnelAmenities: (_: any, { request }: any, ctx: any) =>
-      loadAmenities(request.salesFunnelId, request.sessionKey, ctx),
-  },
-
-  CustomerSalesFunnel: {
-    salesFunnelName: async (p: any, _: any, ctx: any) =>
-      p.salesFunnelName !== undefined
-        ? p.salesFunnelName
-        : (await findFunnel(p, ctx))?.salesFunnelName ?? null,
-
-    urlSlug: async (p: any, _: any, ctx: any) =>
-      p.urlSlug !== undefined
-        ? p.urlSlug
-        : (await findFunnel(p, ctx))?.urlSlug ?? null,
-
-    details: (p: any, _: any, ctx: any) =>
-      loadDetails(p.salesFunnelId, p.sessionKey, ctx),
-
-    amenities: (p: any, _: any, ctx: any) =>
-      loadAmenities(p.salesFunnelId, p.sessionKey, ctx),
-  },
-
-  CustomerFunnelAmenity: {
-    pricing: (p: any, _: any, ctx: any) =>
-      loadPricing(p.amenityId, p.sessionKey, ctx),
-  },
-};
+        return now.isBefore(deadline);
+    }
+}
