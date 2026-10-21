@@ -51,3 +51,31 @@ if (!salesCutoffService.isBookingAllowed(
     throw new SalesClosedException("Booking cutoff time has passed");
 }
 
+
+
+
+
+protected void validatePromoResultCode(Map<String, Object> out, String procName) {
+    Object raw = out.get("p_Result_Code");
+    int code = raw != null ? ((Number) raw).intValue() : 0;
+    String message = Objects.toString(out.get("p_Log_Details"),
+            "DB Error (" + code + ") in " + procName);
+
+    switch (code) {
+        case 1:
+            return;
+        case -2:
+        case -3:
+            throw new SecurityException(message);
+        case -4:
+            throw new IllegalArgumentException(message);
+        case -5:
+            throw new PromoLimitExceededException("Promo usage limit reached (global)");
+        case -6:
+            throw new PromoLimitExceededException("Promo usage limit reached (per customer)");
+        default:
+            throw new RuntimeException(message);
+    }
+}
+
+
