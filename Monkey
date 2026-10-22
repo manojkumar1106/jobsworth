@@ -1,81 +1,28 @@
-@Override
-public Map<String, Object> getCustomerSalesFunnelDetails(TicketRequest req) {
-    log.info("Getting customer sales funnel details: {}", req.getSalesFunnelId());
-    Map<String, Object> funnel = customerSalesFunnelDao.getCustomerSalesFunnelDetails(req);
-    if (funnel != null) {
-        formatCutoffTime(funnel);
-        funnel.put("bookingAllowed", salesCutoffService.isBookingAllowed(
-                funnel.get("timezone") == null ? null : funnel.get("timezone").toString(),
-                funnel.get("salesCutoffLocalTime") == null ? null : funnel.get("salesCutoffLocalTime").toString()));
-    }
-    return funnel;
-}
-
-
-
-@Service
-public class SalesCutoffService {
-
-    // booking closes this many hours before the cutoff (0 = exactly at cutoff)
-    @Value("${sales.booking.buffer-hours:2}")
-    private long bufferHours;
-
-    public boolean isBookingAllowed(String timezone, String salesCutoffLocalTime) {
-        if (timezone == null || salesCutoffLocalTime == null) {
-            return false; // fail closed
+String sessionKey;
+    if (isNewUser) {
+        if (guestKey != null) {
+            sessionKey = guestKey;
+        } else {
+            sessionKey = UUID.randomUUID().toString();
+            authDao.startGuestSession(sessionKey, "CUSTOMER_GUEST");
         }
 
-        ZoneId zone = ZoneId.of(timezone);
-        LocalTime cutoff = LocalTime.parse(salesCutoffLocalTime);
+        TicketRequest upsertRequest = new TicketRequest();
+        upsertRequest.setType("CUSTOMER");
+        upsertRequest.setSessionKey(sessionKey);
+        upsertRequest.setCognitoUserId(userResponse.username());
+        upsertRequest.setEmail(email);
+        upsertRequest.setPhone(null);
+        upsertRequest.setFirstName(null);
+        upsertRequest.setLastName(null);
+        upsertRequest.setDateOfBirth(null);
 
-        ZonedDateTime now = ZonedDateTime.now(zone);
-        ZonedDateTime deadline = now.toLocalDate()
-                .atTime(cutoff)
-                .atZone(zone)
-                .minusHours(bufferHours);
-
-        return now.isBefore(deadline);
+        adminService.upsertUser(upsertRequest);
+    } else {
+        // CHANGED: was null; existing users now pass the guest key too
+        sessionKey = guestKey;
     }
-}
 
-
-
-
-
-Map<String, Object> funnel = customerSalesFunnelDao.getCustomerSalesFunnelDetails(req);
-formatCutoffTime(funnel); // or read the cutoff directly
-
-if (!salesCutoffService.isBookingAllowed(
-        String.valueOf(funnel.get("timezone")),
-        String.valueOf(funnel.get("salesCutoffLocalTime")))) {
-    throw new SalesClosedException("Booking cutoff time has passed");
-}
-
-
-
-
-
-protected void validatePromoResultCode(Map<String, Object> out, String procName) {
-    Object raw = out.get("p_Result_Code");
-    int code = raw != null ? ((Number) raw).intValue() : 0;
-    String message = Objects.toString(out.get("p_Log_Details"),
-            "DB Error (" + code + ") in " + procName);
-
-    switch (code) {
-        case 1:
-            return;
-        case -2:
-        case -3:
-            throw new SecurityException(message);
-        case -4:
-            throw new IllegalArgumentException(message);
-        case -5:
-            throw new PromoLimitExceededException("Promo usage limit reached (global)");
-        case -6:
-            throw new PromoLimitExceededException("Promo usage limit reached (per customer)");
-        default:
-            throw new RuntimeException(message);
-    }
-}
-
-
+    authDao.startClientCustomerSession(
+            userResponse.username(), jwtSessionKey, "CUSTOMER_LOGIN", sessionKey
+    );
