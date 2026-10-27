@@ -1,28 +1,213 @@
-String sessionKey;
-    if (isNewUser) {
-        if (guestKey != null) {
-            sessionKey = guestKey;
-        } else {
-            sessionKey = UUID.randomUUID().toString();
-            authDao.startGuestSession(sessionKey, "CUSTOMER_GUEST");
-        }
+// AmenityService.java - REPLACE the existing upsertAmenitySchedule method with this.
+// Add: import tools.jackson.databind.JsonNode;
 
-        TicketRequest upsertRequest = new TicketRequest();
-        upsertRequest.setType("CUSTOMER");
-        upsertRequest.setSessionKey(sessionKey);
-        upsertRequest.setCognitoUserId(userResponse.username());
-        upsertRequest.setEmail(email);
-        upsertRequest.setPhone(null);
-        upsertRequest.setFirstName(null);
-        upsertRequest.setLastName(null);
-        upsertRequest.setDateOfBirth(null);
+@Override
+public void upsertAmenitySchedule(TicketRequest req) {
+    String timezone = getTimezone(req);
 
-        adminService.upsertUser(upsertRequest);
-    } else {
-        // CHANGED: was null; existing users now pass the guest key too
-        sessionKey = guestKey;
+    // CHANGE: use the RETURNED converted JSON. The old code ignored the return values and
+    // saved req.getSchedules()/req.getAllAmenityScheduleDates() (the originals). When the
+    // GraphQL JSON scalar arrives as a string, toArray() parses a COPY, so the conversion
+    // never reached the original and the unconverted payload was written to the DB.
+    JsonNode schedules = ScheduleTimezoneUtil.schedulesToUtc(req.getSchedules(), timezone);
+    JsonNode allDates = ScheduleTimezoneUtil.datesToUtc(req.getAllAmenityScheduleDates(), timezone);
+
+    amenityDao.upsertAmenitySchedule(
+            req.getSessionKey(), req.getLocationFunctionId(), req.getAmenityId(),
+            allDates.toString(),    // p_All_Amenity_Schedule_Dates_JSON
+            schedules.toString());  // p_Amenity_Schedule_JSON
+}
+
+
+
+
+
+package com.hlt.api.util;
+
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
+import tools.jackson.databind.node.ArrayNode;
+import tools.jackson.databind.node.ObjectNode;
+// TODO: keep your existing BadRequestException import here
+
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.function.UnaryOperator;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+/**
+ * Amenity schedule JSON <-> UTC. All zone math is TimezoneConverter; this class only walks the JSON.
+ * Converted: datesJson, allAmenityScheduleDates, rruleText (DTSTART/UNTIL),
+ * rule (startDate+startTime, endDate+endTime).
+ *
+ * IMPORTANT: the upsert methods RETURN the converted JSON. Callers must persist the RETURNED
+ * value, not the original request object (see AmenityService.upsertAmenitySchedule).
+ */
+public final class ScheduleTimezoneUtil {
+
+    private static final ObjectMapper MAPPER = JsonMapper.builder().build();
+    private static final DateTimeFormatter UTC_FORMAT =
+            DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'");
+    private static final DateTimeFormatter RRULE_FORMAT =
+            DateTimeFormatter.ofPattern("yyyyMMdd'T'HHmmss");
+    private static final Pattern RRULE_DATE =
+            Pattern.compile("(DTSTART:|UNTIL=)(\\d{8}T\\d{6})Z?");
+
+    private ScheduleTimezoneUtil() {
     }
 
-    authDao.startClientCustomerSession(
-            userResponse.username(), jwtSessionKey, "CUSTOMER_LOGIN", sessionKey
-    );
+    // ---------- upsert: UI local -> UTC. Returns the converted array. A trailing Z from the UI is ignored. ----------
+
+    public static JsonNode schedulesToUtc(JsonNode input, String timezone) {
+        JsonNode schedules = toArray(input, "schedules");
+        for (JsonNode node : schedules) {
+            ObjectNode schedule = (ObjectNode) node;
+
+            // CHANGE: scheduleJson / datesJson may arrive as JSON strings. Parse, convert,
+            // and write the parsed node back so the conversion is not lost.
+            ObjectNode scheduleJson = toObject(schedule.get("scheduleJson"), "scheduleJson");
+            schedule.set("scheduleJson", scheduleJson);
+
+            JsonNode rruleText = scheduleJson.get("rruleText");
+            if (rruleText != null && !rruleText.isNull()) {
+                scheduleJson.put("rruleText", convertRrule(rruleText.asString(), timezone, true));
+            }
+            convertRule(scheduleJson.get("rule"), value -> toUtc(value, timezone));
+
+            JsonNode dates = toArray(schedule.get("datesJson"), "datesJson");
+            convertDates(dates, value -> toUtc(value, timezone));
+            schedule.set("datesJson", dates);
+        }
+        return schedules;
+    }
+
+    public static JsonNode datesToUtc(JsonNode input, String timezone) {
+        JsonNode dates = toArray(input, "allAmenityScheduleDates");
+        convertDates(dates, value -> toUtc(value, timezone));
+        return dates;
+    }
+
+    // ---------- get: DB UTC -> local ----------
+
+    public static JsonNode datesToLocal(Object datesJson, String timezone) {
+        JsonNode dates = MAPPER.readTree(datesJson.toString());
+        convertDates(dates, value -> toLocal(value, timezone));
+        return dates;
+    }
+
+    public static Map<String, Object> scheduleToLocal(Map<String, Object> row, String timezone) {
+        Object ruleJson = row.get("ruleJson");
+        Object rruleText = row.get("rruleText");
+
+        JsonNode rule = ruleJson == null ? null : MAPPER.readTree(ruleJson.toString());
+        convertRule(rule, value -> toLocal(value, timezone));
+
+        Map<String, Object> scheduleJson = new LinkedHashMap<>();
+        scheduleJson.put("rule", rule);
+        scheduleJson.put("rruleText",
+                rruleText == null ? null : convertRrule(rruleText.toString(), timezone, false));
+
+        Map<String, Object> schedule = new LinkedHashMap<>();
+        schedule.put("id", row.get("amenityScheduleId"));
+        schedule.put("name", row.get("scheduleName"));
+        schedule.put("scheduleJson", scheduleJson);
+        schedule.put("datesJson", datesToLocal(row.get("datesJson"), timezone));
+        return schedule;
+    }
+
+    // ---------- helpers ----------
+
+    private static JsonNode toArray(JsonNode node, String field) {
+        JsonNode array = node;
+        if (node != null && node.isString()) {
+            try {
+                array = MAPPER.readTree(node.asString());
+            } catch (JacksonException e) {
+                throw new BadRequestException(field + " is not valid JSON: " + e.getOriginalMessage());
+            }
+        }
+        if (array == null || !array.isArray()) {
+            throw new BadRequestException(field + " must be a JSON array");
+        }
+        return array;
+    }
+
+    /** NEW: same as toArray but for a JSON object that may arrive as a string. */
+    private static ObjectNode toObject(JsonNode node, String field) {
+        JsonNode obj = node;
+        if (node != null && node.isString()) {
+            try {
+                obj = MAPPER.readTree(node.asString());
+            } catch (JacksonException e) {
+                throw new BadRequestException(field + " is not valid JSON: " + e.getOriginalMessage());
+            }
+        }
+        if (!(obj instanceof ObjectNode objectNode)) {
+            throw new BadRequestException(field + " must be a JSON object");
+        }
+        return objectNode;
+    }
+
+    private static void convertDates(JsonNode dates, UnaryOperator<String> convert) {
+        for (JsonNode node : dates) {
+            ObjectNode date = (ObjectNode) node;
+            date.put("startDateTime", convert.apply(date.get("startDateTime").asString()));
+            date.put("endDateTime", convert.apply(date.get("endDateTime").asString()));
+        }
+    }
+
+    /** rule: startDate+startTime and endDate+endTime are converted as pairs (a time alone has no date for DST). */
+    private static void convertRule(JsonNode rule, UnaryOperator<String> convert) {
+        if (rule instanceof ObjectNode ruleNode) {
+            convertDateTimePair(ruleNode, "startDate", "startTime", convert);
+            convertDateTimePair(ruleNode, "endDate", "endTime", convert);
+        }
+    }
+
+    private static void convertDateTimePair(ObjectNode rule, String dateKey, String timeKey,
+                                            UnaryOperator<String> convert) {
+        if (!rule.hasNonNull(dateKey) || !rule.hasNonNull(timeKey)) {
+            return;
+        }
+        String time = rule.get(timeKey).asString();
+        String converted = convert.apply(
+                rule.get(dateKey).asString() + "T" + (time.length() == 5 ? time + ":00" : time));
+        rule.put(dateKey, converted.substring(0, 10));   // yyyy-MM-dd
+        rule.put(timeKey, converted.substring(11, 16));  // HH:mm
+    }
+
+    private static String toUtc(String local, String timezone) {
+        LocalDateTime dateTime = LocalDateTime.parse(local.replace("Z", ""));
+        if (TimezoneConverter.isInDstGap(dateTime, timezone)) {
+            throw new BadRequestException(dateTime + " does not exist in " + timezone
+                    + " because of daylight saving. Please choose a different time.");
+        }
+        return TimezoneConverter.toUtc(dateTime, timezone).format(UTC_FORMAT);
+    }
+
+    private static String toLocal(String utc, String timezone) {
+        return TimezoneConverter.toLocal(LocalDateTime.parse(utc.replace("Z", "")), timezone)
+                .format(DateTimeFormatter.ISO_LOCAL_DATE_TIME);
+    }
+
+    /** Rewrites DTSTART / UNTIL inside rruleText. */
+    private static String convertRrule(String rrule, String timezone, boolean toUtc) {
+        Matcher matcher = RRULE_DATE.matcher(rrule);
+        StringBuilder out = new StringBuilder();
+        while (matcher.find()) {
+            LocalDateTime value = LocalDateTime.parse(matcher.group(2), RRULE_FORMAT);
+            String converted = toUtc
+                    ? TimezoneConverter.toUtc(value, timezone).format(RRULE_FORMAT) + "Z"
+                    : TimezoneConverter.toLocal(value, timezone).format(RRULE_FORMAT);
+            matcher.appendReplacement(out, matcher.group(1) + converted);
+        }
+        matcher.appendTail(out);
+        return out.toString();
+    }
+}
+
