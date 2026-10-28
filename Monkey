@@ -2,5 +2,8 @@ if (promotion == null || promotion.isEmpty()) {
     String code = request.getPromoCode();
     if (code != null && !code.isBlank()) {
         promotion = promoEngineApiClient.getPromotionByCode(request.getSessionKey(), code);
+    } else {
+        promotion = promoEngineApiClient.getPromotionById(
+                request.getSessionKey(), request.getPromotionId());
     }
 }
