@@ -1,33 +1,38 @@
-{
-  "schedules": [
-    {
-      "name": "DST test",
-      "scheduleJson": {
-        "rule": {
-          "startDate": "2026-10-29",
-          "startTime": "08:00",
-          "endDate": "2026-11-03",
-          "endTime": "17:00",
-          "frequency": "WEEKLY",
-          "interval": 1,
-          "daysOfWeek": ["MO", "TU", "WE", "TH", "FR"],
-          "recurrenceEndMode": "ON_DATE",
-          "recurrenceEndDate": "2026-11-03"
-        },
-        "rruleText": "DTSTART:20261029T080000\nRRULE:INTERVAL=1;FREQ=WEEKLY;UNTIL=20261103T235900"
-      },
-      "datesJson": [
-        { "startDateTime": "2026-10-29T08:00:00", "endDateTime": "2026-10-29T17:00:00" },
-        { "startDateTime": "2026-10-30T08:00:00", "endDateTime": "2026-10-30T17:00:00" },
-        { "startDateTime": "2026-11-02T08:00:00", "endDateTime": "2026-11-02T17:00:00" },
-        { "startDateTime": "2026-11-03T08:00:00", "endDateTime": "2026-11-03T17:00:00" }
-      ]
+@Transactional
+public ApiResponse<?> createPromotion(CreatePromotionRequest request) {
+
+    if (!request.getStartDate().isBefore(request.getEndDate())) {
+        throw new ValidationException("Start date must be before end date");
     }
-  ],
-  "allAmenityScheduleDates": [
-    { "startDateTime": "2026-10-29T08:00:00", "endDateTime": "2026-10-29T17:00:00" },
-    { "startDateTime": "2026-10-30T08:00:00", "endDateTime": "2026-10-30T17:00:00" },
-    { "startDateTime": "2026-11-02T08:00:00", "endDateTime": "2026-11-02T17:00:00" },
-    { "startDateTime": "2026-11-03T08:00:00", "endDateTime": "2026-11-03T17:00:00" }
-  ]
+
+    // Duplicate check only when a promo code is provided (automatic promos may have none)
+    if (request.getPromoCode() != null && !request.getPromoCode().isBlank()) {
+        Map<String, Object> existing = promoEngineApiClient.getPromotionByCode(
+                request.getSessionKey(), request.getPromoCode());
+        if (existing != null && !existing.isEmpty()) {
+            throw new ValidationException(
+                    "Promo code '" + request.getPromoCode() + "' already exists");
+        }
+    }
+
+    String timezone = promoEngineApiClient.getTimezone(
+            request.getSessionKey(), request.getLocationId().intValue());
+
+    request.setStartDate(TimezoneConverter.toUtc(request.getStartDate(), timezone).toLocalDateTime());
+    request.setEndDate(TimezoneConverter.toUtc(request.getEndDate(), timezone).toLocalDateTime());
+
+    Map<String, Object> promotion = promoEngineApiClient.createPromotion(request.getSessionKey(), request);
+
+    Promotion promotion1 = new Promotion();
+    ObjectMapper objectMapper = new ObjectMapper();
+    objectMapper.registerModule(new JavaTimeModule());
+    Promotion promotionObj = objectMapper.convertValue(promotion, Promotion.class);
+
+    log.info("Promotion created location={} amenity={} promoCode={}",
+            request.getLocationId(), request.getAmenityId(), request.getPromoCode());
+
+    if (PromotionStatus.PUBLISHED.name().equals(request.getPromoStatus())) {
+        droolsRuleService.generatePromotionRule(promotionObj, "ADMIN", request.getSessionKey());
+    }
+    return ApiResponse.success("Promotion Created", null);
 }
