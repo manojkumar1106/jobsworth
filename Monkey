@@ -1,12 +1,10 @@
-if (promotion == null || promotion.isEmpty()) {
-    String code = request.getPromoCode();
-    if (code != null && !code.isBlank()) {
-        promotion = promoEngineApiClient.getPromotionByCode(request.getSessionKey(), code);
-    } else {
-        promotion = promoEngineApiClient.getAllPromotions(request.getSessionKey()).stream()
-                .filter(p -> p.get("Promotion_Id") != null
-                        && ((Number) p.get("Promotion_Id")).longValue() == request.getPromotionId().longValue())
-                .findFirst()
-                .orElse(null);
+} else {
+    // hlt-api PUT /rule-definitions/update does not persist drlContent,
+    // so deactivate the old row and create a new active row with the new DRL
+    Integer deactivated = promoEngineApiClient.deactivateRuleDefinition(rule.getId(), sessionKey);
+    if (deactivated == null || deactivated != 1) {
+        throw new RuntimeException("Could not deactivate old rule id=" + rule.getId());
     }
+    rule.setId(null);
+    ruleDefinition = promoEngineApiClient.createRuleDefinition(rule, sessionKey);
 }
