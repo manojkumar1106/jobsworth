@@ -1,38 +1,6 @@
-@Transactional
-public ApiResponse<?> createPromotion(CreatePromotionRequest request) {
-
-    if (!request.getStartDate().isBefore(request.getEndDate())) {
-        throw new ValidationException("Start date must be before end date");
+if (promotion == null || promotion.isEmpty()) {
+    String code = request.getPromoCode();
+    if (code != null && !code.isBlank()) {
+        promotion = promoEngineApiClient.getPromotionByCode(request.getSessionKey(), code);
     }
-
-    // Duplicate check only when a promo code is provided (automatic promos may have none)
-    if (request.getPromoCode() != null && !request.getPromoCode().isBlank()) {
-        Map<String, Object> existing = promoEngineApiClient.getPromotionByCode(
-                request.getSessionKey(), request.getPromoCode());
-        if (existing != null && !existing.isEmpty()) {
-            throw new ValidationException(
-                    "Promo code '" + request.getPromoCode() + "' already exists");
-        }
-    }
-
-    String timezone = promoEngineApiClient.getTimezone(
-            request.getSessionKey(), request.getLocationId().intValue());
-
-    request.setStartDate(TimezoneConverter.toUtc(request.getStartDate(), timezone).toLocalDateTime());
-    request.setEndDate(TimezoneConverter.toUtc(request.getEndDate(), timezone).toLocalDateTime());
-
-    Map<String, Object> promotion = promoEngineApiClient.createPromotion(request.getSessionKey(), request);
-
-    Promotion promotion1 = new Promotion();
-    ObjectMapper objectMapper = new ObjectMapper();
-    objectMapper.registerModule(new JavaTimeModule());
-    Promotion promotionObj = objectMapper.convertValue(promotion, Promotion.class);
-
-    log.info("Promotion created location={} amenity={} promoCode={}",
-            request.getLocationId(), request.getAmenityId(), request.getPromoCode());
-
-    if (PromotionStatus.PUBLISHED.name().equals(request.getPromoStatus())) {
-        droolsRuleService.generatePromotionRule(promotionObj, "ADMIN", request.getSessionKey());
-    }
-    return ApiResponse.success("Promotion Created", null);
 }
