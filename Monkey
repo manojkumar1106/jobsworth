@@ -1,140 +1,4 @@
-// src/utils/commonValidator.ts
-
-export type FieldType =
-  | "string"
-  | "integer"
-  | "float"
-  | "boolean"
-  | "integerArray"
-  | "objectArray";
-
-export interface FieldRule {
-  type: FieldType;
-  required?: boolean;
-  maxLength?: number;
-  pattern?: RegExp;
-  patternMessage?: string;
-  itemRules?: Record<string, FieldRule>; // used by "objectArray"
-}
-
-export function validateRequest(
-  request: Record<string, unknown>,
-  rules: Record<string, FieldRule>
-): string[] {
-  const errors: string[] = [];
-
-  for (const [fieldName, rule] of Object.entries(rules)) {
-    const value = request[fieldName];
-
-    // Required field validation
-    if (value === null || value === undefined) {
-      if (rule.required) {
-        errors.push(`${fieldName} is required`);
-      }
-      continue;
-    }
-
-    // String validation
-    if (rule.type === "string") {
-      if (typeof value !== "string") {
-        errors.push(`${fieldName} must be a string`);
-        continue;
-      }
-
-      if (rule.required && value.trim() === "") {
-        errors.push(`${fieldName} cannot be empty`);
-        continue;
-      }
-
-      if (rule.maxLength && value.length > rule.maxLength) {
-        errors.push(
-          `${fieldName} cannot exceed ${rule.maxLength} characters`
-        );
-      }
-
-      if (rule.pattern && !rule.pattern.test(value)) {
-        errors.push(
-          rule.patternMessage || `${fieldName} has an invalid format`
-        );
-      }
-    }
-
-    // Integer validation
-    if (rule.type === "integer") {
-      if (typeof value !== "number" || !Number.isInteger(value)) {
-        errors.push(`${fieldName} must be an integer`);
-      }
-    }
-
-    // Float validation
-    if (rule.type === "float") {
-      if (typeof value !== "number" || !Number.isFinite(value)) {
-        errors.push(`${fieldName} must be a number`);
-      }
-    }
-
-    // Boolean validation
-    if (rule.type === "boolean") {
-      if (typeof value !== "boolean") {
-        errors.push(`${fieldName} must be a boolean`);
-      }
-    }
-
-    // Integer array validation
-    if (rule.type === "integerArray") {
-      if (!Array.isArray(value)) {
-        errors.push(`${fieldName} must be an array`);
-        continue;
-      }
-
-      const hasInvalidValue = value.some(
-        (item) => typeof item !== "number" || !Number.isInteger(item)
-      );
-
-      if (hasInvalidValue) {
-        errors.push(`${fieldName} must contain only integers`);
-      }
-    }
-
-    // Object array validation (each item is checked against itemRules)
-    if (rule.type === "objectArray") {
-      if (!Array.isArray(value)) {
-        errors.push(`${fieldName} must be an array`);
-        continue;
-      }
-
-      if (rule.required && value.length === 0) {
-        errors.push(`${fieldName} cannot be empty`);
-        continue;
-      }
-
-      if (rule.itemRules) {
-        value.forEach((item, index) => {
-          if (typeof item !== "object" || item === null) {
-            errors.push(`${fieldName}[${index}] must be an object`);
-            return;
-          }
-
-          const itemErrors = validateRequest(
-            item as Record<string, unknown>,
-            rule.itemRules as Record<string, FieldRule>
-          );
-
-          itemErrors.forEach((message) => {
-            errors.push(`${fieldName}[${index}].${message}`);
-          });
-        });
-      }
-    }
-  }
-
-  return errors;
-}
-
-
-
-
-// src/schema/pricetypes/validators/priceTypeValidator.ts
+// src/schema/physicaladdress/validators/physicalAddressValidator.ts
 
 import { FieldRule } from "../../../utils/commonValidator";
 
@@ -144,66 +8,151 @@ const requiredInteger: FieldRule = {
   required: true,
 };
 
-// AmenityPriceTypeItem input (one item inside priceTypes)
-const amenityPriceTypeItemRules: Record<string, FieldRule> = {
-  amenityPriceTypeId: {
-    type: "integer",
-    required: false, // Int (nullable): absent for new items, present for existing ones
+// CreatePhysicalAddress input
+export const createPhysicalAddressRules: Record<string, FieldRule> = {
+  locationFunctionId: requiredInteger,
+
+  addressLine1: {
+    type: "string",
+    required: true,
+    maxLength: 255,
   },
 
-  amenityPriceTypeName: {
+  addressLine2: {
+    type: "string",
+    required: true,
+    maxLength: 255,
+  },
+
+  city: {
     type: "string",
     required: true,
     maxLength: 100,
   },
 
-  amenityBasePrice: {
-    type: "float",
+  state: {
+    type: "string",
     required: true,
+    maxLength: 100,
   },
 
-  amenityPriceTypeDescription: {
+  zipCode: {
+    type: "string",
+    required: true,
+    maxLength: 20,
+  },
+
+  countryCode: {
+    type: "string",
+    required: true,
+    maxLength: 10,
+  },
+
+  latitude: {
+    type: "float",
+    required: false,
+  },
+
+  longitude: {
+    type: "float",
+    required: false,
+  },
+
+  timezone: {
     type: "string",
     required: false,
-    maxLength: 500,
+    maxLength: 50,
+  },
+
+  isDaylightActive: {
+    type: "boolean",
+    required: false,
   },
 };
 
-// UpsertAmenityPriceType input
-export const upsertAmenityPriceTypeRules: Record<string, FieldRule> = {
-  locationFunctionId: requiredInteger,
-  amenityId: requiredInteger,
+// UpdatePhysicalAddress input: only physicalAddressId is required
+export const updatePhysicalAddressRules: Record<string, FieldRule> = {
+  physicalAddressId: requiredInteger,
 
-  priceTypes: {
-    type: "objectArray",
-    required: true,
-    itemRules: amenityPriceTypeItemRules,
+  addressLine1: {
+    type: "string",
+    required: false,
+    maxLength: 255,
+  },
+
+  addressLine2: {
+    type: "string",
+    required: false,
+    maxLength: 255,
+  },
+
+  city: {
+    type: "string",
+    required: false,
+    maxLength: 100,
+  },
+
+  state: {
+    type: "string",
+    required: false,
+    maxLength: 100,
+  },
+
+  zipCode: {
+    type: "string",
+    required: false,
+    maxLength: 20,
+  },
+
+  countryCode: {
+    type: "string",
+    required: false,
+    maxLength: 10,
+  },
+
+  latitude: {
+    type: "float",
+    required: false,
+  },
+
+  longitude: {
+    type: "float",
+    required: false,
+  },
+
+  timezone: {
+    type: "string",
+    required: false,
+    maxLength: 50,
+  },
+
+  isDaylightActive: {
+    type: "boolean",
+    required: false,
   },
 };
 
-// GetAmenityPricing input
-export const getAmenityPricingRules: Record<string, FieldRule> = {
-  amenityId: requiredInteger,
+// GetPhysicalAddress input
+export const getPhysicalAddressRules: Record<string, FieldRule> = {
+  locationId: requiredInteger,
 };
 
-// getDefaultPriceType has no input, so it needs no rules
 
 
 
 
-
-
-// src/service/pricetypes/priceTypeService.ts
+// src/service/physicaladdress/physicalAddressService.ts
 
 import { GraphQLError } from "graphql";
 import { FieldRule, validateRequest } from "../../utils/commonValidator";
 import { httpClient } from "../../utils/http/httpClient";
 import {
-  upsertAmenityPriceTypeRules,
-  getAmenityPricingRules,
-} from "../../schema/pricetypes/validators/priceTypeValidator";
+  createPhysicalAddressRules,
+  updatePhysicalAddressRules,
+  getPhysicalAddressRules,
+} from "../../schema/physicaladdress/validators/physicalAddressValidator";
 
-async function callPriceTypeData(
+async function callAddressData(
   method: string,
   endpoint: string,
   request: any,
@@ -224,31 +173,27 @@ async function callPriceTypeData(
   }
 
   const baseUrl = process.env.SPRINGBOOT_BASE_ENDPOINT;
-  const url = `${baseUrl}/api/v1/amenity-price-types${endpoint}`;
+  const url = `${baseUrl}/api/v1/physicaladdress${endpoint}`;
 
   return await httpClient(
     url,
     {
       method: method,
-      body: method === "GET" ? undefined : request,
+      body: request,
     },
     context.logger,
     context
   );
 }
 
-//------------Amenity Price Type ---------------
-
-export async function getAmenityPricing(request: any, context: any) {
-  return await callPriceTypeData("POST", "/get", request, context, getAmenityPricingRules);
+export async function createPhysicalAddress(request: any, context: any) {
+  return await callAddressData("POST", "/create", request, context, createPhysicalAddressRules);
 }
 
-export async function getDefaultPriceType(request: any, context: any) {
-  return await callPriceTypeData("GET", "/default", request, context);
+export async function updatePhysicalAddress(request: any, context: any) {
+  return await callAddressData("PUT", "/update", request, context, updatePhysicalAddressRules);
 }
 
-export async function upsertAmenityPriceType(request: any, context: any) {
-  return await callPriceTypeData("POST", "/upsert", request, context, upsertAmenityPriceTypeRules);
+export async function getPhysicalAddress(request: any, context: any) {
+  return await callAddressData("POST", "/getbylocation", request, context, getPhysicalAddressRules);
 }
-
-
