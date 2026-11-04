@@ -1,4 +1,140 @@
-// src/schema/salesfunnel/validators/salesFunnelValidator.ts
+// src/utils/commonValidator.ts
+
+export type FieldType =
+  | "string"
+  | "integer"
+  | "float"
+  | "boolean"
+  | "integerArray"
+  | "objectArray";
+
+export interface FieldRule {
+  type: FieldType;
+  required?: boolean;
+  maxLength?: number;
+  pattern?: RegExp;
+  patternMessage?: string;
+  itemRules?: Record<string, FieldRule>; // used by "objectArray"
+}
+
+export function validateRequest(
+  request: Record<string, unknown>,
+  rules: Record<string, FieldRule>
+): string[] {
+  const errors: string[] = [];
+
+  for (const [fieldName, rule] of Object.entries(rules)) {
+    const value = request[fieldName];
+
+    // Required field validation
+    if (value === null || value === undefined) {
+      if (rule.required) {
+        errors.push(`${fieldName} is required`);
+      }
+      continue;
+    }
+
+    // String validation
+    if (rule.type === "string") {
+      if (typeof value !== "string") {
+        errors.push(`${fieldName} must be a string`);
+        continue;
+      }
+
+      if (rule.required && value.trim() === "") {
+        errors.push(`${fieldName} cannot be empty`);
+        continue;
+      }
+
+      if (rule.maxLength && value.length > rule.maxLength) {
+        errors.push(
+          `${fieldName} cannot exceed ${rule.maxLength} characters`
+        );
+      }
+
+      if (rule.pattern && !rule.pattern.test(value)) {
+        errors.push(
+          rule.patternMessage || `${fieldName} has an invalid format`
+        );
+      }
+    }
+
+    // Integer validation
+    if (rule.type === "integer") {
+      if (typeof value !== "number" || !Number.isInteger(value)) {
+        errors.push(`${fieldName} must be an integer`);
+      }
+    }
+
+    // Float validation
+    if (rule.type === "float") {
+      if (typeof value !== "number" || !Number.isFinite(value)) {
+        errors.push(`${fieldName} must be a number`);
+      }
+    }
+
+    // Boolean validation
+    if (rule.type === "boolean") {
+      if (typeof value !== "boolean") {
+        errors.push(`${fieldName} must be a boolean`);
+      }
+    }
+
+    // Integer array validation
+    if (rule.type === "integerArray") {
+      if (!Array.isArray(value)) {
+        errors.push(`${fieldName} must be an array`);
+        continue;
+      }
+
+      const hasInvalidValue = value.some(
+        (item) => typeof item !== "number" || !Number.isInteger(item)
+      );
+
+      if (hasInvalidValue) {
+        errors.push(`${fieldName} must contain only integers`);
+      }
+    }
+
+    // Object array validation (each item is checked against itemRules)
+    if (rule.type === "objectArray") {
+      if (!Array.isArray(value)) {
+        errors.push(`${fieldName} must be an array`);
+        continue;
+      }
+
+      if (rule.required && value.length === 0) {
+        errors.push(`${fieldName} cannot be empty`);
+        continue;
+      }
+
+      if (rule.itemRules) {
+        value.forEach((item, index) => {
+          if (typeof item !== "object" || item === null) {
+            errors.push(`${fieldName}[${index}] must be an object`);
+            return;
+          }
+
+          const itemErrors = validateRequest(
+            item as Record<string, unknown>,
+            rule.itemRules as Record<string, FieldRule>
+          );
+
+          itemErrors.forEach((message) => {
+            errors.push(`${fieldName}[${index}].${message}`);
+          });
+        });
+      }
+    }
+  }
+
+  return errors;
+}
+
+
+
+
+// src/schema/pricetypes/validators/priceTypeValidator.ts
 
 import { FieldRule } from "../../../utils/commonValidator";
 
@@ -8,106 +144,66 @@ const requiredInteger: FieldRule = {
   required: true,
 };
 
-// Fields shared by create and update
-const salesFunnelBaseRules: Record<string, FieldRule> = {
-  locationId: requiredInteger,
+// AmenityPriceTypeItem input (one item inside priceTypes)
+const amenityPriceTypeItemRules: Record<string, FieldRule> = {
+  amenityPriceTypeId: {
+    type: "integer",
+    required: false, // Int (nullable): absent for new items, present for existing ones
+  },
 
-  salesFunnelName: {
+  amenityPriceTypeName: {
     type: "string",
     required: true,
     maxLength: 100,
   },
 
-  urlSlug: {
-    type: "string",
+  amenityBasePrice: {
+    type: "float",
     required: true,
   },
 
-  isActive: {
-    type: "boolean",
-    required: true,
-  },
-
-  isDateRequired: {
-    type: "boolean",
-    required: true,
-  },
-
-  salesCutoffLocalTime: {
+  amenityPriceTypeDescription: {
     type: "string",
     required: false,
-    pattern: /^(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d$/,
-    patternMessage: "salesCutoffLocalTime must be in HH:mm:ss format",
+    maxLength: 500,
   },
+};
 
-  isWebEnabled: {
-    type: "boolean",
+// UpsertAmenityPriceType input
+export const upsertAmenityPriceTypeRules: Record<string, FieldRule> = {
+  locationFunctionId: requiredInteger,
+  amenityId: requiredInteger,
+
+  priceTypes: {
+    type: "objectArray",
     required: true,
-  },
-
-  isPosEnabled: {
-    type: "boolean",
-    required: true,
-  },
-
-  amenityIds: {
-    type: "integerArray",
-    required: false,
+    itemRules: amenityPriceTypeItemRules,
   },
 };
 
-// CreateSalesFunnel input: base fields + locationFunctionId
-export const createSalesFunnelRules: Record<string, FieldRule> = {
-  ...salesFunnelBaseRules,
-  locationFunctionId: requiredInteger,
+// GetAmenityPricing input
+export const getAmenityPricingRules: Record<string, FieldRule> = {
+  amenityId: requiredInteger,
 };
 
-// UpdateSalesFunnel input: base fields + salesFunnelId
-export const updateSalesFunnelRules: Record<string, FieldRule> = {
-  ...salesFunnelBaseRules,
-  salesFunnelId: requiredInteger,
-};
-
-// DeleteSalesFunnel input
-export const deleteSalesFunnelRules: Record<string, FieldRule> = {
-  salesFunnelId: requiredInteger,
-};
-
-// GetFunnelAmenities input
-export const getFunnelAmenitiesRules: Record<string, FieldRule> = {
-  locationFunctionId: requiredInteger,
-};
-
-// GetLocationSalesFunnel input
-export const getLocationSalesFunnelRules: Record<string, FieldRule> = {
-  locationId: requiredInteger,
-  locationFunctionId: requiredInteger,
-};
-
-// GetSalesFunnelDetails input
-export const getSalesFunnelDetailsRules: Record<string, FieldRule> = {
-  locationId: requiredInteger,
-  salesFunnelId: requiredInteger,
-};
+// getDefaultPriceType has no input, so it needs no rules
 
 
 
 
-// src/service/salesfunnel/salesFunnelService.ts
+
+
+// src/service/pricetypes/priceTypeService.ts
 
 import { GraphQLError } from "graphql";
 import { FieldRule, validateRequest } from "../../utils/commonValidator";
 import { httpClient } from "../../utils/http/httpClient";
 import {
-  createSalesFunnelRules,
-  updateSalesFunnelRules,
-  deleteSalesFunnelRules,
-  getFunnelAmenitiesRules,
-  getLocationSalesFunnelRules,
-  getSalesFunnelDetailsRules,
-} from "../../schema/salesfunnel/validators/salesFunnelValidator";
+  upsertAmenityPriceTypeRules,
+  getAmenityPricingRules,
+} from "../../schema/pricetypes/validators/priceTypeValidator";
 
-async function callFunnelData(
+async function callPriceTypeData(
   method: string,
   endpoint: string,
   request: any,
@@ -128,39 +224,31 @@ async function callFunnelData(
   }
 
   const baseUrl = process.env.SPRINGBOOT_BASE_ENDPOINT;
-  const url = `${baseUrl}/api/v1/funnels${endpoint}`;
+  const url = `${baseUrl}/api/v1/amenity-price-types${endpoint}`;
 
   return await httpClient(
     url,
     {
       method: method,
-      body: request,
+      body: method === "GET" ? undefined : request,
     },
     context.logger,
     context
   );
 }
 
-export async function createSalesFunnel(request: any, context: any) {
-  return await callFunnelData("POST", "/create", request, context, createSalesFunnelRules);
+//------------Amenity Price Type ---------------
+
+export async function getAmenityPricing(request: any, context: any) {
+  return await callPriceTypeData("POST", "/get", request, context, getAmenityPricingRules);
 }
 
-export async function updateSalesFunnel(request: any, context: any) {
-  return await callFunnelData("POST", "/update", request, context, updateSalesFunnelRules);
+export async function getDefaultPriceType(request: any, context: any) {
+  return await callPriceTypeData("GET", "/default", request, context);
 }
 
-export async function deleteSalesFunnel(request: any, context: any) {
-  return await callFunnelData("DELETE", "/delete", request, context, deleteSalesFunnelRules);
+export async function upsertAmenityPriceType(request: any, context: any) {
+  return await callPriceTypeData("POST", "/upsert", request, context, upsertAmenityPriceTypeRules);
 }
 
-export async function getFunnelAmenities(request: any, context: any) {
-  return await callFunnelData("POST", "/amenities", request, context, getFunnelAmenitiesRules);
-}
 
-export async function getSalesFunnel(request: any, context: any) {
-  return await callFunnelData("POST", "/get", request, context, getLocationSalesFunnelRules);
-}
-
-export async function getSalesFunnelDetails(request: any, context: any) {
-  return await callFunnelData("POST", "/details", request, context, getSalesFunnelDetailsRules);
-}
