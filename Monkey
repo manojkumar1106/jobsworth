@@ -1,4 +1,25 @@
-// src/schema/location/validators/locationValidator.ts
+export type FieldType =
+  | "string"
+  | "integer"
+  | "float"
+  | "boolean"
+  | "integerArray"
+  | "objectArray"
+  | "json";
+
+
+
+    // JSON validation (value for a JSON scalar: must be an object or an array)
+    if (rule.type === "json") {
+      if (typeof value !== "object") {
+        errors.push(`${fieldName} must be a valid JSON object or array`);
+      }
+    }
+
+
+
+
+// src/schema/amenities/validators/amenityValidator.ts
 
 import { FieldRule } from "../../../utils/commonValidator";
 
@@ -8,93 +29,117 @@ const requiredInteger: FieldRule = {
   required: true,
 };
 
-// "type" is a required string in every location input
+// "type" is a required string in every amenity input
 const requiredType: FieldRule = {
   type: "string",
   required: true,
   maxLength: 50,
 };
 
-// AddLocation input (used by addLocation and addClientLocation)
-export const addLocationRules: Record<string, FieldRule> = {
+// GetLocationAmenity input
+export const getLocationAmenityRules: Record<string, FieldRule> = {
   type: requiredType,
+  locationId: requiredInteger,
+};
 
-  locationName: {
+// GetAmenityDetail input
+export const getAmenityDetailRules: Record<string, FieldRule> = {
+  type: requiredType,
+  amenityId: requiredInteger,
+};
+
+// GetAmenitySchedule input
+export const getAmenityScheduleRules: Record<string, FieldRule> = {
+  type: requiredType,
+  amenityId: requiredInteger,
+  locationId: requiredInteger,
+  locationFunctionId: requiredInteger,
+};
+
+// InsertAmenity input
+export const insertAmenityRules: Record<string, FieldRule> = {
+  type: requiredType,
+  amenityTypeId: requiredInteger,
+  locationFunctionId: requiredInteger,
+
+  amenityName: {
     type: "string",
     required: true,
     maxLength: 100,
   },
 
-  parentLocationId: {
-    type: "integer",
-    required: false,
+  amenityDescription: {
+    type: "string",
+    required: true,
+    maxLength: 500,
   },
 };
 
-// DeleteLocation input (used by removeLocation, updatePlan and all the get queries)
-export const deleteLocationRules: Record<string, FieldRule> = {
+// UpsertAmenitySchedule input
+export const upsertAmenityScheduleRules: Record<string, FieldRule> = {
   type: requiredType,
+  amenityId: requiredInteger,
   locationId: requiredInteger,
+  locationFunctionId: requiredInteger,
 
-  clientPlanId: {
-    type: "integer",
-    required: false,
+  schedules: {
+    type: "json",
+    required: true,
+  },
+
+  allAmenityScheduleDates: {
+    type: "json",
+    required: true,
   },
 };
 
-// PaymentProvider input (updatePaymentProvider)
-export const paymentProviderRules: Record<string, FieldRule> = {
+// UpdateAmenity input
+export const updateAmenityRules: Record<string, FieldRule> = {
   type: requiredType,
-  locationId: requiredInteger,
-  paymentProviderId: requiredInteger,
-};
+  amenityId: requiredInteger,
 
-// LocationFunction input (upsertLocationFunction)
-export const locationFunctionRules: Record<string, FieldRule> = {
-  type: requiredType,
-  locationId: requiredInteger,
-  functionTypeId: requiredInteger,
+  amenityName: {
+    type: "string",
+    required: true,
+    maxLength: 100,
+  },
 
-  isEnabled: {
-    type: "boolean",
-    required: false,
+  amenityDescription: {
+    type: "string",
+    required: true,
+    maxLength: 500,
   },
 };
 
-// ClientBilling input (updateClientBilling)
-export const clientBillingRules: Record<string, FieldRule> = {
+// RemoveAmenity input
+export const removeAmenityRules: Record<string, FieldRule> = {
   type: requiredType,
-  locationId: requiredInteger,
-  merchantId: requiredInteger,
+  amenityId: requiredInteger,
 };
 
-// MoveLocation input (moveLocation)
-export const moveLocationRules: Record<string, FieldRule> = {
-  type: requiredType,
-  locationId: requiredInteger,
-  parentLocationId: requiredInteger,
-};
+// getAmenityType has no input, so it needs no rules
 
 
 
 
 
 
-// src/service/location/locationService.ts
+// src/service/amenities/amenityService.ts
 
 import { GraphQLError } from "graphql";
 import { FieldRule, validateRequest } from "../../utils/commonValidator";
 import { httpClient } from "../../utils/http/httpClient";
 import {
-  addLocationRules,
-  deleteLocationRules,
-  paymentProviderRules,
-  locationFunctionRules,
-  clientBillingRules,
-  moveLocationRules,
-} from "../../schema/location/validators/locationValidator";
+  getLocationAmenityRules,
+  getAmenityDetailRules,
+  getAmenityScheduleRules,
+  insertAmenityRules,
+  upsertAmenityScheduleRules,
+  updateAmenityRules,
+  removeAmenityRules,
+} from "../../schema/amenities/validators/amenityValidator";
 
-async function postLocationData(
+async function postAmenityData(
   method: string,
   endpoint: string,
   request: any,
@@ -115,7 +160,7 @@ async function postLocationData(
   }
 
   const baseUrl = process.env.SPRINGBOOT_BASE_ENDPOINT;
-  const url = `${baseUrl}/api/v1/venue${endpoint}`;
+  const url = `${baseUrl}/api/v1/amenity${endpoint}`;
 
   return await httpClient(
     url,
@@ -128,62 +173,38 @@ async function postLocationData(
   );
 }
 
-// ---------- Mutations ----------
-
-export async function addLocation(request: any, context: any) {
-  return await postLocationData("POST", "/location", request, context, addLocationRules);
-}
-
-export async function addClientLocation(request: any, context: any) {
-  return await postLocationData("POST", "/clientlocation", request, context, addLocationRules);
-}
-
-export async function removeLocation(request: any, context: any) {
-  return await postLocationData("DELETE", "/location", request, context, deleteLocationRules);
-}
-
-export async function moveLocation(request: any, context: any) {
-  return await postLocationData("POST", "/location/move", request, context, moveLocationRules);
-}
-
-export async function updatePlan(request: any, context: any) {
-  return await postLocationData("POST", "/plan/update", request, context, deleteLocationRules);
-}
-
-export async function updateClientBilling(request: any, context: any) {
-  return await postLocationData("POST", "/billing/update", request, context, clientBillingRules);
-}
-
-export async function updatePaymentProvider(request: any, context: any) {
-  return await postLocationData("POST", "/paymentprovider/update", request, context, paymentProviderRules);
-}
-
-export async function upsertLocationFunction(request: any, context: any) {
-  return await postLocationData("POST", "/insert/locationfunction", request, context, locationFunctionRules);
-}
-
 // ---------- Queries ----------
 
-export async function getLocationDescendents(request: any, context: any) {
-  return await postLocationData("POST", "/location/descendents", request, context, deleteLocationRules);
+export async function getAmenityType(request: any, context: any) {
+  return await postAmenityData("GET", "/type", null, context);
 }
 
-export async function getLocationFunctions(request: any, context: any) {
-  return await postLocationData("POST", "/location/functions", request, context, deleteLocationRules);
+export async function getLocationAmenity(request: any, context: any) {
+  return await postAmenityData("POST", "/location", request, context, getLocationAmenityRules);
 }
 
-export async function getLocationPlan(request: any, context: any) {
-  return await postLocationData("POST", "/clientlocation/plan", request, context, deleteLocationRules);
+export async function getAmenityDetail(request: any, context: any) {
+  return await postAmenityData("POST", "/detail", request, context, getAmenityDetailRules);
 }
 
-export async function getClientPlan(request: any, context: any) {
-  return await postLocationData("POST", "/client/plan", request, context, deleteLocationRules);
+export async function getAmenitySchedule(request: any, context: any) {
+  return await postAmenityData("POST", "/schedule", request, context, getAmenityScheduleRules);
 }
 
-export async function getClientLocationBilling(request: any, context: any) {
-  return await postLocationData("POST", "/locationbilling", request, context, deleteLocationRules);
+// ---------- Mutations ----------
+
+export async function insertAmenity(request: any, context: any) {
+  return await postAmenityData("POST", "/insert", request, context, insertAmenityRules);
 }
 
-export async function getClientPaymentProvider(request: any, context: any) {
-  return await postLocationData("POST", "/paymentprovider", request, context, deleteLocationRules);
+export async function upsertAmenitySchedule(request: any, context: any) {
+  return await postAmenityData("POST", "/schedule/upsert", request, context, upsertAmenityScheduleRules);
+}
+
+export async function updateAmenity(request: any, context: any) {
+  return await postAmenityData("POST", "/update", request, context, updateAmenityRules);
+}
+
+export async function removeAmenity(request: any, context: any) {
+  return await postAmenityData("DELETE", "/remove", request, context, removeAmenityRules);
 }
