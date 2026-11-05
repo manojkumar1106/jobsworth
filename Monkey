@@ -1,53 +1,240 @@
-package com.hlt.api.service.serviceimpl;
+# TKTS-917 `usp_Upsert_Rental_Booking`: add to your existing client classes
 
-import com.hlt.api.dao.CustomerRentalAmenityDao;
-import com.hlt.api.service.ICustomerRentalAmenityService;
-import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
+Client base path stays `/api/v1/rental-amenities`. The new endpoint is `POST /api/v1/rental-amenities/booking/upsert`.
 
-import java.time.LocalDateTime;
-// TODO: import TicketRequest, TimezoneConverter, BadRequestException (same packages as in ScheduleTimezoneUtil)
+## Spring Boot
 
-@Slf4j
-@Service
-@RequiredArgsConstructor
-public class CustomerRentalAmenityService implements ICustomerRentalAmenityService {
+### 1. TicketRequest (add only if missing)
+```java
+private Integer rentalBookingId;          // null/0 => create, >0 => update
+private Integer rentalInquiryId;
+private Integer rentalInquiryStatusId;
+private String rentalNotes;               // up to 4000
+private String contractAttachment;        // up to 2083
+// Everything else (contact*, company*, city, state, country, postalCode, timezone,
+// rentalStartAt, rentalEndAt, isRentalDateFlexible, locationFunctionId, ...) already exists.
+```
 
-    private final CustomerRentalAmenityDao customerRentalAmenityDao;
-
-    @Override
-    @Transactional
-    public void createRentalInquiry(TicketRequest req) {
-        log.info("Creating Rental Inquiry for amenity: {}, timezone: {}", req.getAmenityId(), req.getTimezone());
-
-        // Throws ValidationException for a null/blank/invalid IANA timezone
-        TimezoneConverter.validateTimezone(req.getTimezone());
-
-        LocalDateTime start = req.getRentalStartAt();   // local wall-clock at the venue (Jackson drops a trailing Z)
-        LocalDateTime end = req.getRentalEndAt();
-
-        if (start == null || end == null) {
-            throw new BadRequestException("rentalStartAt and rentalEndAt are required");
-        }
-        if (!end.isAfter(start)) {
-            throw new BadRequestException("rentalEndAt must be after rentalStartAt");
-        }
-        rejectDstGap(start, "rentalStartAt", req.getTimezone());
-        rejectDstGap(end, "rentalEndAt", req.getTimezone());
-
-        // Convert in place: after this the request holds UTC, which is what the DAO stores
-        req.setRentalStartAt(TimezoneConverter.toUtc(start, req.getTimezone()).toLocalDateTime());
-        req.setRentalEndAt(TimezoneConverter.toUtc(end, req.getTimezone()).toLocalDateTime());
-
-        customerRentalAmenityDao.createRentalInquiry(req);
+### 2. RentalAmenityController
+```java
+@Operation(summary = "Create / Update Rental Booking")
+@PostMapping("/booking/upsert")
+public ApiResponse<Void> upsertRentalBooking(@RequestBody TicketRequest req,
+                                             @AuthenticationPrincipal Jwt jwt) {
+    if (jwt != null) {
+        req.setSessionKey(jwt.getClaims().get("origin_jti").toString());
     }
+    rentalAmenityService.upsertRentalBooking(req);
+    return ApiResponse.success("Rental Booking Saved", null);
+}
+```
 
-    private void rejectDstGap(LocalDateTime dateTime, String field, String timezone) {
-        if (TimezoneConverter.isInDstGap(dateTime, timezone)) {
-            throw new BadRequestException(field + " " + dateTime + " does not exist in " + timezone
-                    + " because of daylight saving. Please choose a different time.");
-        }
+### 3. IRentalAmenityService
+```java
+void upsertRentalBooking(TicketRequest req);
+```
+
+### 4. RentalAmenityService
+Imports needed: `java.time.LocalDateTime`, plus your existing `TimezoneConverter` and `BadRequestException`.
+```java
+@Override
+@Transactional
+public void upsertRentalBooking(TicketRequest req) {
+    log.info("Upserting Rental Booking: bookingId: {}, inquiryId: {}, amenityId: {}, timezone: {}",
+            req.getRentalBookingId(), req.getRentalInquiryId(), req.getAmenityId(), req.getTimezone());
+
+    // Throws ValidationException for a null/blank/invalid IANA timezone
+    TimezoneConverter.validateTimezone(req.getTimezone());
+
+    LocalDateTime start = req.getRentalStartAt();   // local wall-clock at the venue (Jackson drops a trailing Z)
+    LocalDateTime end = req.getRentalEndAt();
+
+    if (start == null || end == null) {
+        throw new BadRequestException("rentalStartAt and rentalEndAt are required");
+    }
+    if (!end.isAfter(start)) {
+        throw new BadRequestException("rentalEndAt must be after rentalStartAt");
+    }
+    rejectDstGap(start, "rentalStartAt", req.getTimezone());
+    rejectDstGap(end, "rentalEndAt", req.getTimezone());
+
+    // Convert in place: after this the request holds UTC, which is what the DAO stores
+    req.setRentalStartAt(TimezoneConverter.toUtc(start, req.getTimezone()).toLocalDateTime());
+    req.setRentalEndAt(TimezoneConverter.toUtc(end, req.getTimezone()).toLocalDateTime());
+
+    rentalAmenityDao.upsertRentalBooking(req);
+}
+
+private void rejectDstGap(LocalDateTime dateTime, String field, String timezone) {
+    if (TimezoneConverter.isInDstGap(dateTime, timezone)) {
+        throw new BadRequestException(field + " " + dateTime + " does not exist in " + timezone
+                + " because of daylight saving. Please choose a different time.");
     }
 }
+```
+
+### 5. RentalAmenityDao
+```java
+// client1.usp_Upsert_Rental_Booking (TKTS-917)
+public void upsertRentalBooking(TicketRequest req) {
+    Map<String, Object> params = new HashMap<>();
+    params.put("p_Session_Key", req.getSessionKey());
+    params.put("p_Location_Function_Id", req.getLocationFunctionId());
+
+    // Ids: send NULL instead of 0
+    params.put("p_Rental_Booking_Id", nullIfZero(req.getRentalBookingId()));          // null => create
+    params.put("p_Rental_Inquiry_Id", nullIfZero(req.getRentalInquiryId()));
+    params.put("p_Rental_Inquiry_Status_Id", nullIfZero(req.getRentalInquiryStatusId()));
+    params.put("p_Amenity_Id", nullIfZero(req.getAmenityId()));
+    params.put("p_Client_Customer_Id", nullIfZero(req.getCustomerId()));
+
+    params.put("p_Contact_First_Name", req.getContactFirstName());
+    params.put("p_Contact_Last_Name", req.getContactLastName());
+    params.put("p_Contact_Email_Address", req.getContactEmailAddress());
+    params.put("p_Contact_Phone_Number", req.getContactPhoneNumber());
+
+    params.put("p_Company_Name", req.getCompanyName());
+    params.put("p_Company_Address_Line_1", req.getCompanyAddressLine1());
+    params.put("p_Company_Address_Line_2", req.getCompanyAddressLine2());
+    params.put("p_City", req.getCity());
+    params.put("p_State", req.getState());
+    params.put("p_Country", req.getCountry());
+    params.put("p_Postal_Code", req.getPostalCode());
+
+    params.put("p_Rental_Start_At", req.getRentalStartAt());   // already UTC (converted in service)
+    params.put("p_Rental_End_At", req.getRentalEndAt());       // already UTC (converted in service)
+    params.put("p_Is_Rental_Date_Flexible", req.getIsRentalDateFlexible());
+    params.put("p_Total_Attendees", req.getTotalAttendees());
+    params.put("p_Event_Title", req.getEventTitle());
+    params.put("p_Event_Description", req.getEventDescription());
+    params.put("p_Event_Set_Up_Description", req.getEventSetUpDescription());
+    params.put("p_Is_Audio_Visual_Services_Required", req.getIsAudioVisualServicesRequired());
+    params.put("p_Additional_Information", req.getAdditionalInformation());
+    params.put("p_Referred_By", req.getReferredBy());
+
+    params.put("p_Rental_Notes", req.getRentalNotes());
+    params.put("p_Contract_Attachment", req.getContractAttachment());
+
+    executeVoid("usp_Upsert_Rental_Booking", params);
+}
+
+private Integer nullIfZero(Integer value) {
+    return (value == null || value == 0) ? null : value;
+}
+```
+
+## GraphQL (your existing `rentals` files)
+
+### 6. typeDefs.ts: add the input, and add ONE line inside your existing `type Mutation { }`
+Do not declare a second `type Mutation` in the same template string.
+```graphql
+input UpsertRentalBooking {
+  locationFunctionId: Int!
+  rentalBookingId: Int
+  rentalInquiryId: Int
+  rentalInquiryStatusId: Int
+  amenityId: Int!
+  customerId: Int
+  contactFirstName: String!
+  contactLastName: String!
+  contactEmailAddress: String!
+  contactPhoneNumber: String!
+  companyName: String
+  companyAddressLine1: String
+  companyAddressLine2: String
+  city: String
+  state: String
+  country: String
+  postalCode: String
+  timezone: String!
+  rentalStartAt: String!
+  rentalEndAt: String!
+  isRentalDateFlexible: Boolean!
+  totalAttendees: Int!
+  eventTitle: String!
+  eventDescription: String!
+  eventSetUpDescription: String
+  isAudioVisualServicesRequired: Boolean!
+  additionalInformation: String
+  referredBy: String
+  rentalNotes: String
+  contractAttachment: String
+}
+
+# inside your existing type Mutation { ... }
+upsertRentalBooking(request: UpsertRentalBooking!): SessionResponse
+```
+
+### 7. Validator file (your existing rental amenity validator)
+Add these helper consts if they are missing:
+```ts
+const requiredString: FieldRule = { type: "string", required: true };
+const optionalString: FieldRule = { type: "string", required: false };
+const requiredBoolean: FieldRule = { type: "boolean", required: true }; // confirm "boolean" is supported
+```
+Then add:
+```ts
+// UpsertRentalBooking input
+export const upsertRentalBookingRules: Record<string, FieldRule> = {
+  locationFunctionId: requiredInteger,
+  rentalBookingId: optionalInteger,
+  rentalInquiryId: optionalInteger,
+  rentalInquiryStatusId: optionalInteger,
+  amenityId: requiredInteger,
+  customerId: optionalInteger,
+
+  contactFirstName: requiredString,
+  contactLastName: requiredString,
+  contactEmailAddress: requiredString,
+  contactPhoneNumber: requiredString,
+
+  companyName: optionalString,
+  companyAddressLine1: optionalString,
+  companyAddressLine2: optionalString,
+  city: optionalString,
+  state: optionalString,
+  country: optionalString,
+  postalCode: optionalString,
+
+  timezone: requiredString,
+  rentalStartAt: requiredString,
+  rentalEndAt: requiredString,
+  isRentalDateFlexible: requiredBoolean,
+  totalAttendees: requiredInteger,
+  eventTitle: requiredString,
+  eventDescription: requiredString,
+  eventSetUpDescription: optionalString,
+  isAudioVisualServicesRequired: requiredBoolean,
+  additionalInformation: optionalString,
+  referredBy: optionalString,
+
+  rentalNotes: optionalString,
+  contractAttachment: optionalString,
+};
+```
+
+### 8. rentalAmenityService.ts
+Import `upsertRentalBookingRules` from your validator, then add the function. Use the name of your existing helper in place of `callRentalAmenityData` (the one that takes method, endpoint, request, context, rules):
+```ts
+export async function upsertRentalBooking(request: any, context: any) {
+  return await callRentalAmenityData(
+    "POST",
+    "/booking/upsert",
+    request,
+    context,
+    upsertRentalBookingRules
+  );
+}
+```
+
+### 9. resolvers.ts
+Import `upsertRentalBooking`, then add inside your existing `Mutation: { ... }`:
+```ts
+upsertRentalBooking: async (_: any, { request }: any, ctx: any) => {
+  ctx.logger.info("Upsert Rental Booking", {
+    rentalBookingId: request?.rentalBookingId, // avoid logging customer contact details
+    amenityId: request?.amenityId,
+  });
+  return await upsertRentalBooking(request, ctx);
+},
+```
