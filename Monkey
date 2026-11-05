@@ -1,28 +1,347 @@
-// src/schema/rentals/validators/rentalAmenityValidator.ts
-import { FieldRule } from "../../../utils/commonValidator";
+package com.hlt.api.controller;
 
-const requiredInteger: FieldRule = {
-  type: "integer",
+import com.hlt.api.request.CustomerRentalAmenityRequest;
+import com.hlt.api.service.ICustomerRentalAmenityService;
+import io.swagger.v3.oas.annotations.Operation;
+import lombok.RequiredArgsConstructor;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+// TODO: import ApiResponse (same as your other controllers)
+
+@RestController
+@RequestMapping("/api/v1/customer/rental-inquiries")
+@RequiredArgsConstructor
+public class CustomerRentalAmenityController {
+
+    private final ICustomerRentalAmenityService customerRentalAmenityService;
+
+    @Operation(summary = "Customer submits a rental inquiry")
+    @PostMapping("/create")
+    public ApiResponse<Void> createRentalInquiry(@RequestBody CustomerRentalAmenityRequest req,
+                                                 @AuthenticationPrincipal Jwt jwt) {
+        if (jwt != null) {
+            req.setSessionKey(jwt.getClaims().get("origin_jti").toString());
+        }
+        customerRentalAmenityService.createRentalInquiry(req);
+        return ApiResponse.success("Rental Inquiry Submitted", null);
+    }
+}
+
+
+
+
+package com.hlt.api.service;
+
+import com.hlt.api.request.CustomerRentalAmenityRequest;
+
+public interface ICustomerRentalAmenityService {
+
+    void createRentalInquiry(CustomerRentalAmenityRequest req);
+}
+
+
+
+
+package com.hlt.api.service.serviceimpl;
+
+import com.hlt.api.dao.CustomerRentalAmenityDao;
+import com.hlt.api.request.CustomerRentalAmenityRequest;
+import com.hlt.api.service.ICustomerRentalAmenityService;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Slf4j
+@Service
+@RequiredArgsConstructor
+public class CustomerRentalAmenityService implements ICustomerRentalAmenityService {
+
+    private final CustomerRentalAmenityDao customerRentalAmenityDao;
+
+    @Override
+    @Transactional
+    public void createRentalInquiry(CustomerRentalAmenityRequest req) {
+        log.info("Creating Rental Inquiry for amenity: {}, customer: {}",
+                req.getAmenityId(), req.getClientCustomerId());
+
+        // The proc does not check this, so guard it here (-4 style parameter error)
+        if (req.getEventStartAt() != null && req.getEventEndAt() != null
+                && !req.getEventEndAt().isAfter(req.getEventStartAt())) {
+            throw new IllegalArgumentException("eventEndAt must be after eventStartAt");
+        }
+
+        customerRentalAmenityDao.createRentalInquiry(req);
+    }
+}
+
+
+
+
+package com.hlt.api.dao;
+
+import com.hlt.api.request.CustomerRentalAmenityRequest;
+import org.springframework.stereotype.Repository;
+
+import java.sql.Timestamp;
+import java.util.HashMap;
+import java.util.Map;
+
+@Repository
+public class CustomerRentalAmenityDao extends BaseDao {
+
+    // client1.usp_Create_Rental_Inquiry (TKTS-916)
+    // p_Result_Code (OUT) is validated inside BaseDao.executeVoid -> validateResultCode
+    public void createRentalInquiry(CustomerRentalAmenityRequest req) {
+        Map<String, Object> params = new HashMap<>();
+        params.put("p_Session_Key", req.getSessionKey());
+
+        // Proc does NULLIF(x, 0) for these two; we send NULL instead of 0 ("FE & BE send NULL not 0")
+        params.put("p_Amenity_Id", nullIfZero(req.getAmenityId()));
+        params.put("p_Client_Customer_Id", nullIfZero(req.getClientCustomerId()));
+
+        params.put("p_Contact_First_Name", req.getContactFirstName());
+        params.put("p_Contact_Last_Name", req.getContactLastName());
+        params.put("p_Contact_Email_Address", req.getContactEmailAddress());
+        params.put("p_Contact_Phone_Number", req.getContactPhoneNumber());
+
+        params.put("p_Company_Name", req.getCompanyName());
+        params.put("p_Company_Address_Line_1", req.getCompanyAddressLine1());
+        params.put("p_Company_Address_Line_2", req.getCompanyAddressLine2());
+        params.put("p_City", req.getCity());
+        params.put("p_State", req.getState());
+        params.put("p_Country", req.getCountry());
+        params.put("p_Postal_Code", req.getPostalCode());
+
+        params.put("p_Event_Start_At", req.getEventStartAt() == null ? null : Timestamp.valueOf(req.getEventStartAt()));
+        params.put("p_Event_End_At", req.getEventEndAt() == null ? null : Timestamp.valueOf(req.getEventEndAt()));
+        params.put("p_Is_Event_Date_Flexible", req.getIsEventDateFlexible());
+        params.put("p_Total_Attendees", req.getTotalAttendees());
+        params.put("p_Event_Title", req.getEventTitle());
+        params.put("p_Event_Description", req.getEventDescription());
+        params.put("p_Event_Set_Up_Description", req.getEventSetUpDescription());
+        params.put("p_Is_Audio_Visual_Services_Required", req.getIsAudioVisualServicesRequired());
+        params.put("p_Additional_Information", req.getAdditionalInformation());
+        params.put("p_Referred_By", req.getReferredBy());
+
+        executeVoid("usp_Create_Rental_Inquiry", params);
+    }
+
+    private Integer nullIfZero(Integer value) {
+        return (value == null || value == 0) ? null : value;
+    }
+}
+
+
+
+package com.hlt.api.request;
+
+import lombok.Data;
+import java.time.LocalDateTime;
+// Customer-side request for usp_Create_Rental_Inquiry (TKTS-916).
+// Kept separate from TicketRequest so the customer API stays isolated.
+
+@Data
+public class CustomerRentalAmenityRequest {
+
+    private String sessionKey;                       // set from JWT origin_jti, never from client
+
+    private Integer amenityId;                       // NOT NULL (0 is converted to null in DAO)
+    private Integer clientCustomerId;                // nullable (0 is converted to null in DAO)
+
+    private String contactFirstName;                 // NOT NULL, 50
+    private String contactLastName;                  // NOT NULL, 50
+    private String contactEmailAddress;              // NOT NULL, 50
+    private String contactPhoneNumber;               // NOT NULL, 28
+
+    private String companyName;                      // 50
+    private String companyAddressLine1;              // 100
+    private String companyAddressLine2;              // 100
+    private String city;                             // 100
+    private String state;                            // 100
+    private String country;                          // 50
+    private String postalCode;                       // 10
+
+    private LocalDateTime eventStartAt;              // NOT NULL
+    private LocalDateTime eventEndAt;                // NOT NULL
+    private Boolean isEventDateFlexible;             // NOT NULL (BIT)
+    private Integer totalAttendees;                  // NOT NULL
+    private String eventTitle;                       // NOT NULL, 100
+    private String eventDescription;                 // NOT NULL, 500
+    private String eventSetUpDescription;            // 500
+    private Boolean isAudioVisualServicesRequired;   // NOT NULL (BIT)
+    private String additionalInformation;            // 500
+    private String referredBy;                       // 100
+}
+
+
+
+
+
+// src/schema/customer/rentalamenities/typeDefs.ts
+// Dates are sent as ISO strings, e.g. "2026-12-01T18:00:00"
+export const customerRentalAmenityTypeDefs = `
+  input CreateRentalInquiry {
+    amenityId: Int!
+    clientCustomerId: Int
+    contactFirstName: String!
+    contactLastName: String!
+    contactEmailAddress: String!
+    contactPhoneNumber: String!
+    companyName: String
+    companyAddressLine1: String
+    companyAddressLine2: String
+    city: String
+    state: String
+    country: String
+    postalCode: String
+    eventStartAt: String!
+    eventEndAt: String!
+    isEventDateFlexible: Boolean!
+    totalAttendees: Int!
+    eventTitle: String!
+    eventDescription: String!
+    eventSetUpDescription: String
+    isAudioVisualServicesRequired: Boolean!
+    additionalInformation: String
+    referredBy: String
+  }
+
+  type Mutation {
+    createRentalInquiry(request: CreateRentalInquiry!): SessionResponse
+  }
+`;
+
+
+
+// src/schema/customer/rentalamenities/validator/customerRentalAmenityValidator.ts
+import { FieldRule } from "../../../../utils/commonValidator";
+
+const requiredInteger: FieldRule = { type: "integer", required: true };
+const optionalInteger: FieldRule = { type: "integer", required: false };
+
+const requiredString = (maxLength: number): FieldRule => ({
+  type: "string",
+  required: true,
+  maxLength,
+});
+
+const optionalString = (maxLength: number): FieldRule => ({
+  type: "string",
+  required: false,
+  maxLength,
+});
+
+const requiredBoolean: FieldRule = {
+  type: "boolean", // verify commonValidator supports "boolean" and treats false as a valid value
   required: true,
 };
 
-const optionalInteger: FieldRule = {
-  type: "integer",
-  required: false,
+// CreateRentalInquiry input (maxLength values match the procedure / table columns)
+export const createRentalInquiryRules: Record<string, FieldRule> = {
+  amenityId: requiredInteger,
+  clientCustomerId: optionalInteger,
+
+  contactFirstName: requiredString(50),
+  contactLastName: requiredString(50),
+  contactEmailAddress: requiredString(50),
+  contactPhoneNumber: requiredString(28),
+
+  companyName: optionalString(50),
+  companyAddressLine1: optionalString(100),
+  companyAddressLine2: optionalString(100),
+  city: optionalString(100),
+  state: optionalString(100),
+  country: optionalString(50),
+  postalCode: optionalString(10),
+
+  eventStartAt: requiredString(30),
+  eventEndAt: requiredString(30),
+  isEventDateFlexible: requiredBoolean,
+  totalAttendees: requiredInteger,
+  eventTitle: requiredString(100),
+  eventDescription: requiredString(500),
+  eventSetUpDescription: optionalString(500),
+  isAudioVisualServicesRequired: requiredBoolean,
+  additionalInformation: optionalString(500),
+  referredBy: optionalString(100),
 };
 
-// UpsertRentalAmenity input
-export const upsertRentalAmenityRules: Record<string, FieldRule> = {
-  rentalAmenityId: optionalInteger,        // Int (nullable): absent for new, present for existing
-  amenityId: requiredInteger,              // Int!
-  locationFunctionId: requiredInteger,     // Int!
-  productionLocationId: optionalInteger,   // Int (nullable): NULL if location has no production function/configuration
-  squareFootage: requiredInteger,          // Int!
-  maxCapacityStanding: requiredInteger,    // Int!
-  maxCapacitySitting: requiredInteger,     // Int!
-  maxCapacityRoundTable: requiredInteger,  // Int!
-  isGeneralAdmissionIncluded: {
-    type: "boolean",                       // Boolean!
-    required: true,
+
+
+
+// src/service/customer/rentalamenities/customerRentalAmenityService.ts
+import { GraphQLError } from "graphql";
+import { FieldRule, validateRequest } from "../../../utils/commonValidator";
+import { httpClient } from "../../../utils/http/httpClient";
+import { createRentalInquiryRules } from "../../../schema/customer/rentalamenities/validator/customerRentalAmenityValidator";
+
+async function callCustomerRentalAmenityData(
+  method: string,
+  endpoint: string,
+  request: any,
+  context: any,
+  validationRules?: Record<string, FieldRule>
+) {
+  if (validationRules) {
+    const errors = validateRequest(request, validationRules);
+
+    if (errors.length > 0) {
+      throw new GraphQLError(`Validation Failed: ${errors.join(", ")}`, {
+        extensions: {
+          code: "BAD_USER_INPUT",
+          errors,
+        },
+      });
+    }
+  }
+
+  const baseUrl = process.env.SPRINGBOOT_BASE_ENDPOINT;
+  const url = `${baseUrl}/api/v1/customer/rental-inquiries${endpoint}`;
+  return await httpClient(
+    url,
+    {
+      method: method,
+      body: method === "GET" ? undefined : request,
+    },
+    context.logger,
+    context
+  );
+}
+
+//------------Customer Rental Inquiry --------------
+
+export async function createRentalInquiry(request: any, context: any) {
+  return await callCustomerRentalAmenityData(
+    "POST",
+    "/create",
+    request,
+    context,
+    createRentalInquiryRules
+  );
+}
+
+
+
+
+// src/schema/customer/rentalamenities/resolvers.ts
+import { createRentalInquiry } from "../../../service/customer/rentalamenities/customerRentalAmenityService";
+
+export const customerRentalAmenityResolvers = {
+  Mutation: {
+    createRentalInquiry: async (_: any, { request }: any, ctx: any) => {
+      ctx.logger.info("Create Rental Inquiry", {
+        amenityId: request?.amenityId, // avoid logging customer contact details
+      });
+      return await createRentalInquiry(request, ctx);
+    },
   },
 };
+
+
+
+
