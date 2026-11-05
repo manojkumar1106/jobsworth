@@ -1,71 +1,150 @@
-// src/schema/customer/salesfunnel/validators/customerSalesFunnelValidator.ts
+// ADD these fields to your existing TicketRequest.java
+// (amenityId and sessionKey already exist there, so don't duplicate them)
+// If TicketRequest doesn't use Lombok (@Data/@Getter/@Setter), add getters/setters too.
 
-import { FieldRule } from "../../../../utils/commonValidator";
-
-const requiredInteger: FieldRule = {
-  type: "integer",
-  required: true,
-};
-
-// Rejects missing, null, empty and whitespace-only session keys
-const requiredSessionKey: FieldRule = {
-  type: "string",
-  required: true,
-};
-
-// GetCustomerSalesFunnel input
-export const getCustomerSalesFunnelRules: Record<string, FieldRule> = {
-  sessionKey: requiredSessionKey,
-};
-
-// GetCustomerSalesFunnelDetails input
-export const getCustomerSalesFunnelDetailsRules: Record<string, FieldRule> = {
-  salesFunnelId: requiredInteger,
-  sessionKey: requiredSessionKey,
-};
-
-// GetCustomerSalesFunnelAmenities input
-export const getCustomerSalesFunnelAmenitiesRules: Record<string, FieldRule> = {
-  salesFunnelId: requiredInteger,
-  sessionKey: requiredSessionKey,
-};
+private Integer rentalAmenityId;               // null/0 => create, >0 => update
+private Integer productionLocationId;          // NULL if location has no production function/configuration
+private Integer squareFootage;
+private Integer maxCapacityStanding;
+private Integer maxCapacitySitting;
+private Integer maxCapacityRoundTable;
+private Boolean isGeneralAdmissionIncluded;    // Lombok getter: getIsGeneralAdmissionIncluded()
 
 
 
 
-// src/schema/customer/pricetypes/validators/customerPriceTypeValidator.ts
+package com.hlt.api.controller;
 
-import { FieldRule } from "../../../../utils/commonValidator";
+import com.hlt.api.service.IRentalAmenityService;
+import io.swagger.v3.oas.annotations.Operation;
+import lombok.RequiredArgsConstructor;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+// TODO: add your existing imports for ApiResponse and TicketRequest (same as AmenityPriceTypeController)
 
-// GetCustomerAmenityPricing input
-export const getCustomerAmenityPricingRules: Record<string, FieldRule> = {
-  amenityId: {
-    type: "integer",
-    required: true,
-  },
+@RestController
+@RequestMapping("/api/v1/customer/rental-amenities")
+@RequiredArgsConstructor
+public class RentalAmenityController {
 
-  sessionKey: {
-    type: "string",
-    required: true,
-  },
-};
+    private final IRentalAmenityService rentalAmenityService;
+
+    @Operation(summary = "Create / Update Rental Amenity")
+    @PostMapping("/upsert")
+    public ApiResponse<Void> upsertRentalAmenity(@RequestBody TicketRequest req,
+                                                 @AuthenticationPrincipal Jwt jwt) {
+        if (jwt != null) {
+            req.setSessionKey(jwt.getClaims().get("origin_jti").toString());
+        }
+        rentalAmenityService.upsertRentalAmenity(req);
+        return ApiResponse.success("Rental Amenity Saved", null);
+    }
+}
 
 
 
 
+package com.hlt.api.service;
 
-// src/service/customer/salesfunnel/salesFunnelService.ts
+// TODO: import TicketRequest (same as IAmenityPriceTypeService)
 
+public interface IRentalAmenityService {
+
+    void upsertRentalAmenity(TicketRequest req);
+}
+
+
+
+
+package com.hlt.api.service.serviceimpl;
+
+import com.hlt.api.dao.RentalAmenityDao;
+import com.hlt.api.service.IRentalAmenityService;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+// TODO: import TicketRequest (same as AmenityPriceTypeService)
+
+@Slf4j
+@Service
+@RequiredArgsConstructor
+public class RentalAmenityService implements IRentalAmenityService {
+
+    private final RentalAmenityDao rentalAmenityDao;
+
+    @Override
+    @Transactional
+    public void upsertRentalAmenity(TicketRequest req) {
+        log.info("Upserting Rental Amenity: rentalAmenityId: {}, amenityId: {}, productionLocationId: {}",
+                req.getRentalAmenityId(), req.getAmenityId(), req.getProductionLocationId());
+        rentalAmenityDao.upsertRentalAmenity(req);
+    }
+}
+
+
+
+package com.hlt.api.dao;
+
+import org.springframework.stereotype.Repository;
+import java.util.HashMap;
+import java.util.Map;
+// TODO: import TicketRequest
+
+@Repository
+public class RentalAmenityDao extends BaseDao {
+
+    // usp_Upsert_Rental_Amenity (TKTS-915)
+    // BaseDao.executeVoid validates p_Result_Code (-2 session, -3 permission, -4 parameter, other != 1 unhandled)
+    public void upsertRentalAmenity(TicketRequest req) {
+        Map<String, Object> params = new HashMap<>();
+        params.put("p_Session_Key", req.getSessionKey());
+        params.put("p_Rental_Amenity_Id", req.getRentalAmenityId());                 // null/0 => create
+        params.put("p_Amenity_Id", req.getAmenityId());
+        params.put("p_Production_Location_Id", req.getProductionLocationId());       // NULL allowed
+        params.put("p_Square_Footage", req.getSquareFootage());
+        params.put("p_Max_Capacity_Standing", req.getMaxCapacityStanding());
+        params.put("p_Max_Capacity_Sitting", req.getMaxCapacitySitting());
+        params.put("p_Max_Capacity_Round_Table", req.getMaxCapacityRoundTable());
+        params.put("p_Is_General_Admission_Included", req.getIsGeneralAdmissionIncluded()); // BIT
+        executeVoid("usp_Upsert_Rental_Amenity", params);
+    }
+}
+
+
+
+// src/schema/rentalamenities/typeDefs.ts
+export const rentalAmenityTypeDefs = `
+  input UpsertRentalAmenity {
+    rentalAmenityId: Int
+    amenityId: Int!
+    productionLocationId: Int
+    squareFootage: Int
+    maxCapacityStanding: Int
+    maxCapacitySitting: Int
+    maxCapacityRoundTable: Int
+    isGeneralAdmissionIncluded: Boolean
+  }
+
+  type Mutation {
+    upsertRentalAmenity(request: UpsertRentalAmenity!): SessionResponse
+  }
+`;
+
+
+
+
+// src/service/rentalamenities/rentalAmenityService.ts
 import { GraphQLError } from "graphql";
-import { FieldRule, validateRequest } from "../../../utils/commonValidator";
-import { httpClient } from "../../../utils/http/httpClient";
-import {
-  getCustomerSalesFunnelRules,
-  getCustomerSalesFunnelDetailsRules,
-  getCustomerSalesFunnelAmenitiesRules,
-} from "../../../schema/customer/salesfunnel/validators/customerSalesFunnelValidator";
+import { FieldRule, validateRequest } from "../../utils/commonValidator";
+import { httpClient } from "../../utils/http/httpClient";
+import { upsertRentalAmenityRules } from "../../schema/rentalamenities/validators/rentalAmenityValidator";
 
-async function callCustomerFunnelData(
+async function callCustomerRentalAmenityData(
   method: string,
   endpoint: string,
   request: any,
@@ -86,15 +165,7 @@ async function callCustomerFunnelData(
   }
 
   const baseUrl = process.env.SPRINGBOOT_BASE_ENDPOINT;
-  let url = `${baseUrl}/api/v1/customer/funnels${endpoint}`;
-
-  if (method === "GET") {
-    const queryParams = new URLSearchParams({
-      sessionKey: request.sessionKey,
-    }).toString();
-    url = `${url}?${queryParams}`;
-  }
-
+  const url = `${baseUrl}/api/v1/customer/rental-amenities${endpoint}`;
   return await httpClient(
     url,
     {
@@ -106,65 +177,34 @@ async function callCustomerFunnelData(
   );
 }
 
-export async function getCustomerSalesFunnel(request: any, context: any) {
-  return await callCustomerFunnelData("GET", "/get", request, context, getCustomerSalesFunnelRules);
-}
+//------------Customer Rental Amenity --------------
 
-export async function getCustomerSalesFunnelDetails(request: any, context: any) {
-  return await callCustomerFunnelData("POST", "/details", request, context, getCustomerSalesFunnelDetailsRules);
-}
-
-export async function getCustomerSalesFunnelAmenities(request: any, context: any) {
-  return await callCustomerFunnelData("POST", "/amenities", request, context, getCustomerSalesFunnelAmenitiesRules);
-}
-
-
-
-
-
-// src/service/customer/pricetypes/priceTypeService.ts
-
-import { GraphQLError } from "graphql";
-import { FieldRule, validateRequest } from "../../../utils/commonValidator";
-import { httpClient } from "../../../utils/http/httpClient";
-import { getCustomerAmenityPricingRules } from "../../../schema/customer/pricetypes/validators/customerPriceTypeValidator";
-
-async function callCustomerPriceTypeData(
-  method: string,
-  endpoint: string,
-  request: any,
-  context: any,
-  validationRules?: Record<string, FieldRule>
-) {
-  if (validationRules) {
-    const errors = validateRequest(request, validationRules);
-
-    if (errors.length > 0) {
-      throw new GraphQLError(`Validation Failed: ${errors.join(", ")}`, {
-        extensions: {
-          code: "BAD_USER_INPUT",
-          errors,
-        },
-      });
-    }
-  }
-
-  const baseUrl = process.env.SPRINGBOOT_BASE_ENDPOINT;
-  const url = `${baseUrl}/api/v1/customer/amenity-price-types${endpoint}`;
-
-  return await httpClient(
-    url,
-    {
-      method: method,
-      body: method === "GET" ? undefined : request,
-    },
-    context.logger,
-    context
+export async function upsertRentalAmenity(request: any, context: any) {
+  return await callCustomerRentalAmenityData(
+    "POST",
+    "/upsert",
+    request,
+    context,
+    upsertRentalAmenityRules
   );
 }
 
-//------------Customer Amenity Price Type ---------------
 
-export async function getCustomerAmenityPricing(request: any, context: any) {
-  return await callCustomerPriceTypeData("POST", "/pricing", request, context, getCustomerAmenityPricingRules);
-}
+
+// src/schema/rentalamenities/resolvers.ts
+import { upsertRentalAmenity } from "../../service/rentalamenities/rentalAmenityService";
+
+export const rentalAmenityResolvers = {
+  Mutation: {
+    upsertRentalAmenity: async (_: any, { request }: any, ctx: any) => {
+      ctx.logger.info("Upsert Rental Amenity", { request });
+      return await upsertRentalAmenity(request, ctx);
+    },
+  },
+};
+
+
+
+
+
+
