@@ -344,4 +344,15 @@ export const customerRentalAmenityResolvers = {
 
 
 
+private LocalDateTime eventStartAt;              // NOT NULL
+private LocalDateTime eventEndAt;                // NOT NULL
+private Boolean isEventDateFlexible;             // NOT NULL (BIT)
+private Integer totalAttendees;                  // NOT NULL
+private String eventTitle;                       // NOT NULL, 100
+private String eventDescription;                 // NOT NULL, 500
+private String eventSetUpDescription;            // 500
+private Boolean isAudioVisualServicesRequired;   // NOT NULL (BIT)
+private String additionalInformation;            // 500
+private String referredBy; 
+
 
