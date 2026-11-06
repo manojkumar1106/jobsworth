@@ -11,3 +11,22 @@ private void validateResultCode(Map<String, Object> out, String procName) {
         default -> throw new RuntimeException("Unhandled Exception (" + code + ")");
     }
 }
+
+
+
+protected void validatePromoResultCode(Map<String, Object> out, String procName) {
+    Object raw = out.get("p_Result_Code");
+    int code = raw != null ? ((Number) raw).intValue() : 0;
+    if (code == 1) return;   // success
+
+    log.error("Promo stored procedure {} returned result code {}", procName, code);   // internal detail stays in the log
+
+    switch (code) {
+        case -2 -> throw new SecurityException("Session Exception");
+        case -3 -> throw new SecurityException("User/Permission Exception");
+        case -4 -> throw new IllegalArgumentException("Parameter Exception");
+        case -5 -> throw new PromoLimitExceededException("Promo usage limit reached (global)");
+        case -6 -> throw new PromoLimitExceededException("Promo usage limit reached (per customer)");
+        default -> throw new RuntimeException("Unhandled Exception (" + code + ")");
+    }
+}
