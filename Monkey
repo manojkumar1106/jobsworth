@@ -1,91 +1,13 @@
-# `usp_Get_Rental_Inquiry_Statuses` (client): add to your existing client classes
+private void validateResultCode(Map<String, Object> out, String procName) {
+    int code = (int) out.getOrDefault("p_Result_Code", 0);
+    if (code == 1) return;   // success
 
-Input: `p_Session_Key` only. Output: `p_Result_Code`, plus a result set of `Rental_Inquiry_Status_Id, Status_Name`.
-The proc finds the location function from its own name, so the API takes no request fields.
-This proc has no dates, so no timezone work is needed.
+    log.error("Stored procedure {} returned result code {}", procName, code);
 
-Endpoint: `GET /api/v1/rental-amenities/inquiry-statuses`
-
-## Spring Boot
-
-### 1. RentalAmenityController
-```java
-@Operation(summary = "Get Rental Inquiry Statuses")
-@GetMapping("/inquiry-statuses")
-public ApiResponse<List<Map<String, Object>>> getRentalInquiryStatuses(@AuthenticationPrincipal Jwt jwt) {
-    String sessionKey = jwt != null ? jwt.getClaims().get("origin_jti").toString() : null;
-    return ApiResponse.success("Rental Inquiry Statuses",
-            rentalAmenityService.getRentalInquiryStatuses(sessionKey));
+    switch (code) {
+        case -2 -> throw new SecurityException("Session Exception");
+        case -3 -> throw new SecurityException("User/Permission Exception");
+        case -4 -> throw new IllegalArgumentException("Parameter Exception");
+        default -> throw new RuntimeException("Unhandled Exception (" + code + ")");
+    }
 }
-```
-
-### 2. IRentalAmenityService
-```java
-List<Map<String, Object>> getRentalInquiryStatuses(String sessionKey);
-```
-
-### 3. RentalAmenityService
-```java
-@Override
-public List<Map<String, Object>> getRentalInquiryStatuses(String sessionKey) {
-    return rentalAmenityDao.getRentalInquiryStatuses(sessionKey);
-}
-```
-No `@Transactional` is needed because this is a read-only call.
-
-### 4. RentalAmenityDao
-Use the BaseDao method that returns a list. `executeList` is a placeholder, as in the earlier get API.
-```java
-// client1.usp_Get_Rental_Inquiry_Statuses
-public List<Map<String, Object>> getRentalInquiryStatuses(String sessionKey) {
-    Map<String, Object> params = new HashMap<>();
-    params.put("p_Session_Key", sessionKey);
-    return executeList("usp_Get_Rental_Inquiry_Statuses", params);   // p_Result_Code validated in BaseDao
-}
-```
-
-`TicketRequest` needs no change here. I pass the session key as a plain string because the API has no other input.
-If you want the same shape as your other methods, build a `TicketRequest`, call `setSessionKey` on it, and pass that.
-
-## GraphQL
-
-### 5. typeDefs.ts
-```graphql
-type RentalInquiryStatus {
-  rentalInquiryStatusId: Int
-  statusName: String
-}
-
-# inside your existing type Query { ... }
-getRentalInquiryStatuses: [RentalInquiryStatus]
-```
-The camelCase field names assume your DAO returns camelCase keys. Keep the shape in line with your other get queries.
-
-### 6. Validator
-There is no input, so nothing to add.
-
-### 7. rentalAmenityService.ts
-Use your existing helper name in place of `callRentalAmenityData`. There are no validation rules and no body.
-```ts
-export async function getRentalInquiryStatuses(context: any) {
-  return await callRentalAmenityData(
-    "GET",
-    "/inquiry-statuses",
-    undefined,
-    context
-  );
-}
-```
-
-### 8. resolvers.ts
-Add this inside your existing `Query: { ... }`.
-```ts
-getRentalInquiryStatuses: async (_: any, __: any, ctx: any) => {
-  ctx.logger.info("Get Rental Inquiry Statuses");
-  return await getRentalInquiryStatuses(ctx);
-},
-```
-
-## Check in the stored procedure
-- `@Location_Function_Id` is set by the SELECT that runs before `TRY_PROC` and has no `LIMIT 1`. If more than one row matches the proc name, MySQL will error. A `LIMIT 1` there would be safer.
-- Using `@Valid` and `@Granted` as session variables is the same pattern as your other procs.
