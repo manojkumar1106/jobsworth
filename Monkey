@@ -1,127 +1,91 @@
-# TKTS: `usp_Get_Rental_Inquiries` (client): add to your existing client classes
+# `usp_Get_Rental_Inquiry_Statuses` (client): add to your existing client classes
 
-Input: `p_Session_Key`, `p_Location_Function_Id`. Output: `p_Result_Code`, plus a result set with
-`Location_Id, Parent_Location_Id, Position, Rental_Booking_Id, Rental_Inquiry_Id`
-(the location and its parent locations, each with its inquiries and bookings).
+Input: `p_Session_Key` only. Output: `p_Result_Code`, plus a result set of `Rental_Inquiry_Status_Id, Status_Name`.
+The proc finds the location function from its own name, so the API takes no request fields.
+This proc has no dates, so no timezone work is needed.
 
-Endpoint: `POST /api/v1/rental-amenities/inquiries/get`
-There are no date columns in the result, so no timezone conversion is needed.
+Endpoint: `GET /api/v1/rental-amenities/inquiry-statuses`
 
 ## Spring Boot
 
-### 1. TicketRequest
-`sessionKey` and `locationFunctionId` already exist, so there is nothing to add.
-
-### 2. RentalAmenityController
+### 1. RentalAmenityController
 ```java
-@Operation(summary = "Get Rental Inquiries")
-@PostMapping("/inquiries/get")
-public ApiResponse<List<Map<String, Object>>> getRentalInquiries(@RequestBody TicketRequest req,
-                                                                 @AuthenticationPrincipal Jwt jwt) {
-    if (jwt != null) {
-        req.setSessionKey(jwt.getClaims().get("origin_jti").toString());
-    }
-    return ApiResponse.success("Rental Inquiries", rentalAmenityService.getRentalInquiries(req));
+@Operation(summary = "Get Rental Inquiry Statuses")
+@GetMapping("/inquiry-statuses")
+public ApiResponse<List<Map<String, Object>>> getRentalInquiryStatuses(@AuthenticationPrincipal Jwt jwt) {
+    String sessionKey = jwt != null ? jwt.getClaims().get("origin_jti").toString() : null;
+    return ApiResponse.success("Rental Inquiry Statuses",
+            rentalAmenityService.getRentalInquiryStatuses(sessionKey));
 }
 ```
 
-### 3. IRentalAmenityService
+### 2. IRentalAmenityService
 ```java
-List<Map<String, Object>> getRentalInquiries(TicketRequest req);
+List<Map<String, Object>> getRentalInquiryStatuses(String sessionKey);
 ```
 
-### 4. RentalAmenityService
+### 3. RentalAmenityService
 ```java
 @Override
-public List<Map<String, Object>> getRentalInquiries(TicketRequest req) {
-    log.info("Getting Rental Inquiries for locationFunctionId: {}", req.getLocationFunctionId());
-    return rentalAmenityDao.getRentalInquiries(req);
+public List<Map<String, Object>> getRentalInquiryStatuses(String sessionKey) {
+    return rentalAmenityDao.getRentalInquiryStatuses(sessionKey);
 }
 ```
-No `@Transactional` is needed here, because this is a read-only call.
+No `@Transactional` is needed because this is a read-only call.
 
-### 5. RentalAmenityDao
-Use whichever BaseDao method returns a list for you. I haven't seen its method names, so `executeList` is a placeholder.
+### 4. RentalAmenityDao
+Use the BaseDao method that returns a list. `executeList` is a placeholder, as in the earlier get API.
 ```java
-// client1.usp_Get_Rental_Inquiries
-public List<Map<String, Object>> getRentalInquiries(TicketRequest req) {
+// client1.usp_Get_Rental_Inquiry_Statuses
+public List<Map<String, Object>> getRentalInquiryStatuses(String sessionKey) {
     Map<String, Object> params = new HashMap<>();
-    params.put("p_Session_Key", req.getSessionKey());
-    params.put("p_Location_Function_Id", req.getLocationFunctionId());
-    return executeList("usp_Get_Rental_Inquiries", params);   // p_Result_Code validated in BaseDao
+    params.put("p_Session_Key", sessionKey);
+    return executeList("usp_Get_Rental_Inquiry_Statuses", params);   // p_Result_Code validated in BaseDao
 }
 ```
+
+`TicketRequest` needs no change here. I pass the session key as a plain string because the API has no other input.
+If you want the same shape as your other methods, build a `TicketRequest`, call `setSessionKey` on it, and pass that.
 
 ## GraphQL
 
-### 6. typeDefs.ts
+### 5. typeDefs.ts
 ```graphql
-input GetRentalInquiries {
-  locationFunctionId: Int!
-}
-
-type RentalInquiryRow {
-  locationId: Int
-  parentLocationId: Int
-  position: Int
-  rentalBookingId: Int
-  rentalInquiryId: Int
+type RentalInquiryStatus {
+  rentalInquiryStatusId: Int
+  statusName: String
 }
 
 # inside your existing type Query { ... }
-getRentalInquiries(request: GetRentalInquiries!): [RentalInquiryRow]
+getRentalInquiryStatuses: [RentalInquiryStatus]
 ```
-If your other queries return a wrapper type instead of a bare list, follow that. This depends on the DAO returning camelCase keys.
+The camelCase field names assume your DAO returns camelCase keys. Keep the shape in line with your other get queries.
 
-### 7. Validator
-```ts
-// GetRentalInquiries input
-export const getRentalInquiriesRules: Record<string, FieldRule> = {
-  locationFunctionId: requiredInteger,
-};
-```
+### 6. Validator
+There is no input, so nothing to add.
 
-### 8. rentalAmenityService.ts
-Use your existing helper name in place of `callRentalAmenityData`.
+### 7. rentalAmenityService.ts
+Use your existing helper name in place of `callRentalAmenityData`. There are no validation rules and no body.
 ```ts
-export async function getRentalInquiries(request: any, context: any) {
+export async function getRentalInquiryStatuses(context: any) {
   return await callRentalAmenityData(
-    "POST",
-    "/inquiries/get",
-    request,
-    context,
-    getRentalInquiriesRules
+    "GET",
+    "/inquiry-statuses",
+    undefined,
+    context
   );
 }
 ```
 
-### 9. resolvers.ts
+### 8. resolvers.ts
 Add this inside your existing `Query: { ... }`.
 ```ts
-getRentalInquiries: async (_: any, { request }: any, ctx: any) => {
-  ctx.logger.info("Get Rental Inquiries", { locationFunctionId: request?.locationFunctionId });
-  return await getRentalInquiries(request, ctx);
+getRentalInquiryStatuses: async (_: any, __: any, ctx: any) => {
+  ctx.logger.info("Get Rental Inquiry Statuses");
+  return await getRentalInquiryStatuses(ctx);
 },
 ```
 
-## Things to check in the stored procedure
-These come from my reading of your screenshots, which were angled and partly blurry. Please check the real file.
-- The permission check passes `@Location_Function_Id`, but the parameter is `p_Location_Function_Id`. As written, the user variable is NULL, so the check may fail or behave oddly.
-- The first query in the recursive CTE uses `WHERE Location_Id = @Location`, but the variable set above is `@Location_Id`.
-- The booking join reads `ON RenBoo.Rental_Inquiry = RenInq.Rental_Inquiry`, but the column is probably `Rental_Inquiry_Id`.
-- The result has no inquiry details (contact name, event title, dates and so on). It returns only ids. If the UI needs details, ask the DB team to extend the select.
-
-
-
-
-@Override
-public List<Map<String, Object>> getRentalInquiries(TicketRequest req) {
-    List<Map<String, Object>> rows = rentalAmenityDao.getRentalInquiries(req);
-    for (Map<String, Object> row : rows) {
-        String tz = (String) row.get("timezone");
-        row.put("rentalStartAt", TimezoneConverter.toLocal((LocalDateTime) row.get("rentalStartAt"), tz));
-        row.put("rentalEndAt", TimezoneConverter.toLocal((LocalDateTime) row.get("rentalEndAt"), tz));
-    }
-    return rows;
-}
-
+## Check in the stored procedure
+- `@Location_Function_Id` is set by the SELECT that runs before `TRY_PROC` and has no `LIMIT 1`. If more than one row matches the proc name, MySQL will error. A `LIMIT 1` there would be safer.
+- Using `@Valid` and `@Granted` as session variables is the same pattern as your other procs.
