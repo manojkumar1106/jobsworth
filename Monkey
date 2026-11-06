@@ -1,240 +1,112 @@
-# TKTS-917 `usp_Upsert_Rental_Booking`: add to your existing client classes
+# TKTS: `usp_Get_Rental_Inquiries` (client): add to your existing client classes
 
-Client base path stays `/api/v1/rental-amenities`. The new endpoint is `POST /api/v1/rental-amenities/booking/upsert`.
+Input: `p_Session_Key`, `p_Location_Function_Id`. Output: `p_Result_Code`, plus a result set with
+`Location_Id, Parent_Location_Id, Position, Rental_Booking_Id, Rental_Inquiry_Id`
+(the location and its parent locations, each with its inquiries and bookings).
+
+Endpoint: `POST /api/v1/rental-amenities/inquiries/get`
+There are no date columns in the result, so no timezone conversion is needed.
 
 ## Spring Boot
 
-### 1. TicketRequest (add only if missing)
-```java
-private Integer rentalBookingId;          // null/0 => create, >0 => update
-private Integer rentalInquiryId;
-private Integer rentalInquiryStatusId;
-private String rentalNotes;               // up to 4000
-private String contractAttachment;        // up to 2083
-// Everything else (contact*, company*, city, state, country, postalCode, timezone,
-// rentalStartAt, rentalEndAt, isRentalDateFlexible, locationFunctionId, ...) already exists.
-```
+### 1. TicketRequest
+`sessionKey` and `locationFunctionId` already exist, so there is nothing to add.
 
 ### 2. RentalAmenityController
 ```java
-@Operation(summary = "Create / Update Rental Booking")
-@PostMapping("/booking/upsert")
-public ApiResponse<Void> upsertRentalBooking(@RequestBody TicketRequest req,
-                                             @AuthenticationPrincipal Jwt jwt) {
+@Operation(summary = "Get Rental Inquiries")
+@PostMapping("/inquiries/get")
+public ApiResponse<List<Map<String, Object>>> getRentalInquiries(@RequestBody TicketRequest req,
+                                                                 @AuthenticationPrincipal Jwt jwt) {
     if (jwt != null) {
         req.setSessionKey(jwt.getClaims().get("origin_jti").toString());
     }
-    rentalAmenityService.upsertRentalBooking(req);
-    return ApiResponse.success("Rental Booking Saved", null);
+    return ApiResponse.success("Rental Inquiries", rentalAmenityService.getRentalInquiries(req));
 }
 ```
 
 ### 3. IRentalAmenityService
 ```java
-void upsertRentalBooking(TicketRequest req);
+List<Map<String, Object>> getRentalInquiries(TicketRequest req);
 ```
 
 ### 4. RentalAmenityService
-Imports needed: `java.time.LocalDateTime`, plus your existing `TimezoneConverter` and `BadRequestException`.
 ```java
 @Override
-@Transactional
-public void upsertRentalBooking(TicketRequest req) {
-    log.info("Upserting Rental Booking: bookingId: {}, inquiryId: {}, amenityId: {}, timezone: {}",
-            req.getRentalBookingId(), req.getRentalInquiryId(), req.getAmenityId(), req.getTimezone());
-
-    // Throws ValidationException for a null/blank/invalid IANA timezone
-    TimezoneConverter.validateTimezone(req.getTimezone());
-
-    LocalDateTime start = req.getRentalStartAt();   // local wall-clock at the venue (Jackson drops a trailing Z)
-    LocalDateTime end = req.getRentalEndAt();
-
-    if (start == null || end == null) {
-        throw new BadRequestException("rentalStartAt and rentalEndAt are required");
-    }
-    if (!end.isAfter(start)) {
-        throw new BadRequestException("rentalEndAt must be after rentalStartAt");
-    }
-    rejectDstGap(start, "rentalStartAt", req.getTimezone());
-    rejectDstGap(end, "rentalEndAt", req.getTimezone());
-
-    // Convert in place: after this the request holds UTC, which is what the DAO stores
-    req.setRentalStartAt(TimezoneConverter.toUtc(start, req.getTimezone()).toLocalDateTime());
-    req.setRentalEndAt(TimezoneConverter.toUtc(end, req.getTimezone()).toLocalDateTime());
-
-    rentalAmenityDao.upsertRentalBooking(req);
-}
-
-private void rejectDstGap(LocalDateTime dateTime, String field, String timezone) {
-    if (TimezoneConverter.isInDstGap(dateTime, timezone)) {
-        throw new BadRequestException(field + " " + dateTime + " does not exist in " + timezone
-                + " because of daylight saving. Please choose a different time.");
-    }
+public List<Map<String, Object>> getRentalInquiries(TicketRequest req) {
+    log.info("Getting Rental Inquiries for locationFunctionId: {}", req.getLocationFunctionId());
+    return rentalAmenityDao.getRentalInquiries(req);
 }
 ```
+No `@Transactional` is needed here, because this is a read-only call.
 
 ### 5. RentalAmenityDao
+Use whichever BaseDao method returns a list for you. I haven't seen its method names, so `executeList` is a placeholder.
 ```java
-// client1.usp_Upsert_Rental_Booking (TKTS-917)
-public void upsertRentalBooking(TicketRequest req) {
+// client1.usp_Get_Rental_Inquiries
+public List<Map<String, Object>> getRentalInquiries(TicketRequest req) {
     Map<String, Object> params = new HashMap<>();
     params.put("p_Session_Key", req.getSessionKey());
     params.put("p_Location_Function_Id", req.getLocationFunctionId());
-
-    // Ids: send NULL instead of 0
-    params.put("p_Rental_Booking_Id", nullIfZero(req.getRentalBookingId()));          // null => create
-    params.put("p_Rental_Inquiry_Id", nullIfZero(req.getRentalInquiryId()));
-    params.put("p_Rental_Inquiry_Status_Id", nullIfZero(req.getRentalInquiryStatusId()));
-    params.put("p_Amenity_Id", nullIfZero(req.getAmenityId()));
-    params.put("p_Client_Customer_Id", nullIfZero(req.getCustomerId()));
-
-    params.put("p_Contact_First_Name", req.getContactFirstName());
-    params.put("p_Contact_Last_Name", req.getContactLastName());
-    params.put("p_Contact_Email_Address", req.getContactEmailAddress());
-    params.put("p_Contact_Phone_Number", req.getContactPhoneNumber());
-
-    params.put("p_Company_Name", req.getCompanyName());
-    params.put("p_Company_Address_Line_1", req.getCompanyAddressLine1());
-    params.put("p_Company_Address_Line_2", req.getCompanyAddressLine2());
-    params.put("p_City", req.getCity());
-    params.put("p_State", req.getState());
-    params.put("p_Country", req.getCountry());
-    params.put("p_Postal_Code", req.getPostalCode());
-
-    params.put("p_Rental_Start_At", req.getRentalStartAt());   // already UTC (converted in service)
-    params.put("p_Rental_End_At", req.getRentalEndAt());       // already UTC (converted in service)
-    params.put("p_Is_Rental_Date_Flexible", req.getIsRentalDateFlexible());
-    params.put("p_Total_Attendees", req.getTotalAttendees());
-    params.put("p_Event_Title", req.getEventTitle());
-    params.put("p_Event_Description", req.getEventDescription());
-    params.put("p_Event_Set_Up_Description", req.getEventSetUpDescription());
-    params.put("p_Is_Audio_Visual_Services_Required", req.getIsAudioVisualServicesRequired());
-    params.put("p_Additional_Information", req.getAdditionalInformation());
-    params.put("p_Referred_By", req.getReferredBy());
-
-    params.put("p_Rental_Notes", req.getRentalNotes());
-    params.put("p_Contract_Attachment", req.getContractAttachment());
-
-    executeVoid("usp_Upsert_Rental_Booking", params);
-}
-
-private Integer nullIfZero(Integer value) {
-    return (value == null || value == 0) ? null : value;
+    return executeList("usp_Get_Rental_Inquiries", params);   // p_Result_Code validated in BaseDao
 }
 ```
 
-## GraphQL (your existing `rentals` files)
+## GraphQL
 
-### 6. typeDefs.ts: add the input, and add ONE line inside your existing `type Mutation { }`
-Do not declare a second `type Mutation` in the same template string.
+### 6. typeDefs.ts
 ```graphql
-input UpsertRentalBooking {
+input GetRentalInquiries {
   locationFunctionId: Int!
+}
+
+type RentalInquiryRow {
+  locationId: Int
+  parentLocationId: Int
+  position: Int
   rentalBookingId: Int
   rentalInquiryId: Int
-  rentalInquiryStatusId: Int
-  amenityId: Int!
-  customerId: Int
-  contactFirstName: String!
-  contactLastName: String!
-  contactEmailAddress: String!
-  contactPhoneNumber: String!
-  companyName: String
-  companyAddressLine1: String
-  companyAddressLine2: String
-  city: String
-  state: String
-  country: String
-  postalCode: String
-  timezone: String!
-  rentalStartAt: String!
-  rentalEndAt: String!
-  isRentalDateFlexible: Boolean!
-  totalAttendees: Int!
-  eventTitle: String!
-  eventDescription: String!
-  eventSetUpDescription: String
-  isAudioVisualServicesRequired: Boolean!
-  additionalInformation: String
-  referredBy: String
-  rentalNotes: String
-  contractAttachment: String
 }
 
-# inside your existing type Mutation { ... }
-upsertRentalBooking(request: UpsertRentalBooking!): SessionResponse
+# inside your existing type Query { ... }
+getRentalInquiries(request: GetRentalInquiries!): [RentalInquiryRow]
 ```
+If your other queries return a wrapper type instead of a bare list, follow that. This depends on the DAO returning camelCase keys.
 
-### 7. Validator file (your existing rental amenity validator)
-Add these helper consts if they are missing:
+### 7. Validator
 ```ts
-const requiredString: FieldRule = { type: "string", required: true };
-const optionalString: FieldRule = { type: "string", required: false };
-const requiredBoolean: FieldRule = { type: "boolean", required: true }; // confirm "boolean" is supported
-```
-Then add:
-```ts
-// UpsertRentalBooking input
-export const upsertRentalBookingRules: Record<string, FieldRule> = {
+// GetRentalInquiries input
+export const getRentalInquiriesRules: Record<string, FieldRule> = {
   locationFunctionId: requiredInteger,
-  rentalBookingId: optionalInteger,
-  rentalInquiryId: optionalInteger,
-  rentalInquiryStatusId: optionalInteger,
-  amenityId: requiredInteger,
-  customerId: optionalInteger,
-
-  contactFirstName: requiredString,
-  contactLastName: requiredString,
-  contactEmailAddress: requiredString,
-  contactPhoneNumber: requiredString,
-
-  companyName: optionalString,
-  companyAddressLine1: optionalString,
-  companyAddressLine2: optionalString,
-  city: optionalString,
-  state: optionalString,
-  country: optionalString,
-  postalCode: optionalString,
-
-  timezone: requiredString,
-  rentalStartAt: requiredString,
-  rentalEndAt: requiredString,
-  isRentalDateFlexible: requiredBoolean,
-  totalAttendees: requiredInteger,
-  eventTitle: requiredString,
-  eventDescription: requiredString,
-  eventSetUpDescription: optionalString,
-  isAudioVisualServicesRequired: requiredBoolean,
-  additionalInformation: optionalString,
-  referredBy: optionalString,
-
-  rentalNotes: optionalString,
-  contractAttachment: optionalString,
 };
 ```
 
 ### 8. rentalAmenityService.ts
-Import `upsertRentalBookingRules` from your validator, then add the function. Use the name of your existing helper in place of `callRentalAmenityData` (the one that takes method, endpoint, request, context, rules):
+Use your existing helper name in place of `callRentalAmenityData`.
 ```ts
-export async function upsertRentalBooking(request: any, context: any) {
+export async function getRentalInquiries(request: any, context: any) {
   return await callRentalAmenityData(
     "POST",
-    "/booking/upsert",
+    "/inquiries/get",
     request,
     context,
-    upsertRentalBookingRules
+    getRentalInquiriesRules
   );
 }
 ```
 
 ### 9. resolvers.ts
-Import `upsertRentalBooking`, then add inside your existing `Mutation: { ... }`:
+Add this inside your existing `Query: { ... }`.
 ```ts
-upsertRentalBooking: async (_: any, { request }: any, ctx: any) => {
-  ctx.logger.info("Upsert Rental Booking", {
-    rentalBookingId: request?.rentalBookingId, // avoid logging customer contact details
-    amenityId: request?.amenityId,
-  });
-  return await upsertRentalBooking(request, ctx);
+getRentalInquiries: async (_: any, { request }: any, ctx: any) => {
+  ctx.logger.info("Get Rental Inquiries", { locationFunctionId: request?.locationFunctionId });
+  return await getRentalInquiries(request, ctx);
 },
 ```
+
+## Things to check in the stored procedure
+These come from my reading of your screenshots, which were angled and partly blurry. Please check the real file.
+- The permission check passes `@Location_Function_Id`, but the parameter is `p_Location_Function_Id`. As written, the user variable is NULL, so the check may fail or behave oddly.
+- The first query in the recursive CTE uses `WHERE Location_Id = @Location`, but the variable set above is `@Location_Id`.
+- The booking join reads `ON RenBoo.Rental_Inquiry = RenInq.Rental_Inquiry`, but the column is probably `Rental_Inquiry_Id`.
+- The result has no inquiry details (contact name, event title, dates and so on). It returns only ids. If the UI needs details, ask the DB team to extend the select.
