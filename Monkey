@@ -110,3 +110,18 @@ These come from my reading of your screenshots, which were angled and partly blu
 - The first query in the recursive CTE uses `WHERE Location_Id = @Location`, but the variable set above is `@Location_Id`.
 - The booking join reads `ON RenBoo.Rental_Inquiry = RenInq.Rental_Inquiry`, but the column is probably `Rental_Inquiry_Id`.
 - The result has no inquiry details (contact name, event title, dates and so on). It returns only ids. If the UI needs details, ask the DB team to extend the select.
+
+
+
+
+@Override
+public List<Map<String, Object>> getRentalInquiries(TicketRequest req) {
+    List<Map<String, Object>> rows = rentalAmenityDao.getRentalInquiries(req);
+    for (Map<String, Object> row : rows) {
+        String tz = (String) row.get("timezone");
+        row.put("rentalStartAt", TimezoneConverter.toLocal((LocalDateTime) row.get("rentalStartAt"), tz));
+        row.put("rentalEndAt", TimezoneConverter.toLocal((LocalDateTime) row.get("rentalEndAt"), tz));
+    }
+    return rows;
+}
+
