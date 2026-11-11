@@ -1,135 +1,88 @@
-# `usp_Get_Rental_Inquiry_Details` (client, TKTS-926): add to your existing client classes
-
-Input: `p_Session_Key`, `p_Location_Function_Id`, `p_Rental_Inquiry_Id`, `p_Rental_Booking_Id`. Output: `p_Result_Code`, plus one row.
-- Booking id is null: the row comes from `Rental_Inquiry` (first time the inquiry is opened).
-- Booking id is set: the row comes from `Rental_Booking`, with `Rental_Booking_Id`, `Rental_Notes` and `Contract_Attachment` added.
-
-Endpoint: `POST /api/v1/rental-amenities/inquiries/details`
-
-## Timezone handling
-The DB values are UTC: `Rental_Start_At`, `Rental_End_At`, `Recieved_Inquiry_At` (the proc spells it "Recieved") and `Last_Updated`.
-**This proc does not return a timezone.** The previous list API (`usp_Get_Rental_Inquiries`) does return one per row,
-so the UI sends that same `timezone` back in this request. It is validated and used to convert the four values to local time.
-`Last_Updated` can be NULL (inquiry branch), so every date is null-checked.
-
-## Spring Boot
-
-### 1. TicketRequest
-`sessionKey`, `locationFunctionId`, `timezone` and `rentalBookingId` already exist. Add only if missing:
-```java
-private Integer rentalInquiryId;
-```
-
-### 2. RentalAmenityController
-```java
-@Operation(summary = "Get Rental Inquiry / Booking Details")
-@PostMapping("/inquiries/details")
-public ApiResponse<Map<String, Object>> getRentalInquiryDetails(@RequestBody TicketRequest req,
-                                                                @AuthenticationPrincipal Jwt jwt) {
-    if (jwt != null) {
-        req.setSessionKey(jwt.getClaims().get("origin_jti").toString());
-    }
-    return ApiResponse.success("Rental Inquiry Details", rentalAmenityService.getRentalInquiryDetails(req));
-}
-```
-
-### 3. IRentalAmenityService
-```java
-Map<String, Object> getRentalInquiryDetails(TicketRequest req);
-```
-
-### 4. RentalAmenityService
-Imports: `java.time.LocalDateTime`, `java.util.List`, `java.util.Map` (plus your existing `TimezoneConverter`).
-```java
-@Override
-public Map<String, Object> getRentalInquiryDetails(TicketRequest req) {
-    // Throws ValidationException for a null/blank/invalid IANA timezone
-    TimezoneConverter.validateTimezone(req.getTimezone());
-
-    List<Map<String, Object>> rows = rentalAmenityDao.getRentalInquiryDetails(req);
-    if (rows.isEmpty()) {
-        return null;
-    }
-
-    Map<String, Object> row = rows.get(0);
-    for (String key : List.of("rentalStartAt", "rentalEndAt", "recievedInquiryAt", "lastUpdated")) {
-        if (row.get(key) != null) {
-            row.put(key, TimezoneConverter.toLocal((LocalDateTime) row.get(key), req.getTimezone()));
+ @Operation(summary = "Get Amenity Schedule Types")
+    @PostMapping("/schedule-types/get")
+    public ApiResponse<List<Map<String, Object>>> getAmenityScheduleTypes(@RequestBody TicketRequest req,
+                                                                          @AuthenticationPrincipal Jwt jwt) {
+        if (jwt != null) {
+            req.setSessionKey(jwt.getClaims().get("origin_jti").toString());
         }
+        return ApiResponse.success("Amenity Schedule Types", amenityService.getAmenityScheduleTypes(req));
     }
-    return row;
-}
-```
-The key `recievedInquiryAt` keeps the proc's spelling ("Recieved_Inquiry_At"). If the DB team fixes it, change it here too.
-No `@Transactional` is needed because this is a read-only call.
 
-### 5. RentalAmenityDao
-`executeList` is the same placeholder as before. Use your real BaseDao list method.
-```java
-// client1.usp_Get_Rental_Inquiry_Details (TKTS-926)
-public List<Map<String, Object>> getRentalInquiryDetails(TicketRequest req) {
-    Map<String, Object> params = new HashMap<>();
-    params.put("p_Session_Key", req.getSessionKey());
-    params.put("p_Location_Function_Id", req.getLocationFunctionId());
-    params.put("p_Rental_Inquiry_Id", nullIfZero(req.getRentalInquiryId()));
-    params.put("p_Rental_Booking_Id", nullIfZero(req.getRentalBookingId()));   // null => read from the inquiry
-    return executeList("usp_Get_Rental_Inquiry_Details", params);              // p_Result_Code validated in BaseDao
-}
-```
-`nullIfZero` already exists in this DAO from the booking upsert.
 
-## GraphQL
-
-### 6. typeDefs.ts
-```graphql
-input GetRentalInquiryDetails {
-  locationFunctionId: Int!
-  rentalInquiryId: Int!
-  rentalBookingId: Int
-  timezone: String!
+List<Map<String, Object>> getAmenityScheduleTypes(TicketRequest req);
 }
 
-# inside your existing type Query { ... }
-getRentalInquiryDetails(request: GetRentalInquiryDetails!): <same return type as getRentalInquiries>
-```
-Use the same return type you gave `getRentalInquiries`. The response fields are the proc's columns in camelCase, with the four dates as local-time strings.
 
-### 7. Validator
-```ts
-// GetRentalInquiryDetails input
-export const getRentalInquiryDetailsRules: Record<string, FieldRule> = {
-  locationFunctionId: requiredInteger,
-  rentalInquiryId: requiredInteger,
-  rentalBookingId: optionalInteger,
-  timezone: requiredString,
+
+  @Override
+    public List<Map<String, Object>> getAmenityScheduleTypes(TicketRequest req) {
+        log.info("Getting Amenity Schedule Types for locationFunctionId: {}", req.getLocationFunctionId());
+        // Read-only call, so no @Transactional. The proc returns no date or time columns, so no timezone conversion.
+        return amenityDao.getAmenityScheduleTypes(req);
+    }
+
+
+
+public List<Map<String, Object>> getAmenityScheduleTypes(TicketRequest req) {
+        Map<String, Object> params = new HashMap<>();
+        params.put("p_Session_Key", req.getSessionKey());
+        params.put("p_Location_Function_Id", req.getLocationFunctionId());
+        return executeList("usp_Get_Amenity_Schedule_Types", params);   // placeholder: use your BaseDao list method
+    }
+
+
+
+
+
+
+export const amenityScheduleTypeTypeDefs = `
+  input GetAmenityScheduleTypes {
+    locationFunctionId: Int!
+  }
+
+  type Query {
+    getAmenityScheduleTypes(request: GetAmenityScheduleTypes!): SessionResponse
+  }
+`;
+
+
+
+
+// src/schema/amenities/validators/amenityScheduleTypeValidator.ts
+import { FieldRule } from "../../../utils/commonValidator";
+
+const requiredInteger: FieldRule = {
+  type: "integer",
+  required: true,
 };
-```
 
-### 8. rentalAmenityService.ts
-Import `getRentalInquiryDetailsRules` from the validator, then add:
-```ts
-export async function getRentalInquiryDetails(request: any, context: any) {
-  return await callRentalAmenityData("POST", "/inquiries/details", request, context, getRentalInquiryDetailsRules);
-}
-```
+// GetAmenityScheduleTypes input
+export const getAmenityScheduleTypesRules: Record<string, FieldRule> = {
+  locationFunctionId: requiredInteger,
+};
 
-### 9. resolvers.ts
-Add inside the existing `Query: { ... }`:
-```ts
-getRentalInquiryDetails: async (_: any, { request }: any, ctx: any) => {
-  ctx.logger.info("Get Rental Inquiry Details", {
-    rentalInquiryId: request?.rentalInquiryId,
-    rentalBookingId: request?.rentalBookingId,
-  });
-  return await getRentalInquiryDetails(request, ctx);
-},
-```
 
-## Check in the stored procedure
-- The permission check calls `sys_Check_Session_Permission(p_Session_Key, @Location_Function_Id, ...)`. That variable is never set from the
-  parameter `p_Location_Function_Id`. The same mistake was in `usp_Get_Rental_Inquiries`. The Jira comment says the proc has been tested, so it may be
-  a misread in my screenshot, but please check it.
-- The inquiry branch selects `Rental_Start_At` and `Rental_End_At` from `Rental_Inquiry`. Earlier, the `Rental_Inquiry` table showed `Event_Start_At` and `Event_End_At`.
-  If the table was renamed, no problem. If not, that branch will fail.
-- The two branches return different columns: only the booking branch has `Rental_Booking_Id`, `Rental_Notes` and `Contract_Attachment`.
-  The UI has to handle those being missing for an inquiry that has no booking yet.
+
+
+export async function getAmenityScheduleTypes(request: any, context: any) {
+  return await callAmenityData(
+    "POST",
+    "/schedule-types/get",
+    request,
+    context,
+    getAmenityScheduleTypesRules
+  );
+
+
+
+
+export const amenityScheduleTypeResolvers = {
+  Query: {
+    getAmenityScheduleTypes: async (_: any, { request }: any, ctx: any) => {
+      ctx.logger.info("Get Amenity Schedule Types", { locationFunctionId: request?.locationFunctionId });
+      return await getAmenityScheduleTypes(request, ctx);
+    },
+  },
+
+
+
