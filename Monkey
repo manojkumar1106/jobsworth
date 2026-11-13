@@ -1,92 +1,70 @@
-
-    @Operation(summary = "Get Available Amenity Dates")
-    @PostMapping("/available-dates/get")
-    public ApiResponse<List<Map<String, Object>>> getAvailableAmenityDates(@RequestBody TicketRequest req,
-                                                                           @AuthenticationPrincipal Jwt jwt) {
-        if (jwt != null) {
-            req.setSessionKey(jwt.getClaims().get("origin_jti").toString());
-        }
-        return ApiResponse.success("Available Amenity Dates", customerAmenityService.getAvailableAmenityDates(req));
+@Operation(summary = "Get Rental Amenity Details")
+@PostMapping("/details/get")
+public ApiResponse<Map<String, Object>> getRentalAmenityDetails(@RequestBody TicketRequest req,
+                                                                @AuthenticationPrincipal Jwt jwt) {
+    if (jwt != null) {
+        req.setSessionKey(jwt.getClaims().get("origin_jti").toString());
     }
+    return ApiResponse.success("Rental Amenity Details", rentalAmenityService.getRentalAmenityDetails(req));
+}
 
 
-
- @Override
-    public List<Map<String, Object>> getAvailableAmenityDates(TicketRequest req) {
-        log.info("Getting available dates for amenityId: {}", req.getAmenityId());
-
-        String tz = req.getTimezone();
-        TimezoneConverter.validateTimezone(tz);
-
-        List<Map<String, Object>> rows = customerAmenityDao.getAvailableAmenityDates(req);
-
-        // Non-rental amenities return occurrenceStartAt / occurrenceEndAt in UTC -> convert to the venue's local time.
-        // Rental amenities return only scheduleDay (already a local date string), so these keys are absent and skipped.
-        for (Map<String, Object> row : rows) {
-            if (row.get("occurrenceStartAt") != null) {
-                row.put("occurrenceStartAt", TimezoneConverter.toLocal((LocalDateTime) row.get("occurrenceStartAt"), tz));
-            }
-            if (row.get("occurrenceEndAt") != null) {
-                row.put("occurrenceEndAt", TimezoneConverter.toLocal((LocalDateTime) row.get("occurrenceEndAt"), tz));
-            }
-        }
-        return rows;   // read-only call, so no @Transactional
+Map<String, Object> getRentalAmenityDetails(TicketRequest req);
 
 
 
 
-public List<Map<String, Object>> getAvailableAmenityDates(TicketRequest req) {
-        Map<String, Object> params = new HashMap<>();
-        params.put("p_Session_Key", req.getSessionKey());
-        params.put("p_Amenity_Id", req.getAmenityId());
-        return executeList("usp_Get_Available_Amenity_Dates", params);   // placeholder: use your BaseDao list method
-    }
+@Override
+public Map<String, Object> getRentalAmenityDetails(TicketRequest req) {
+    log.info("Getting rental amenity details for amenityId: {}", req.getAmenityId());
+    List<Map<String, Object>> rows = rentalAmenityDao.getRentalAmenityDetails(req);
+    return rows.isEmpty() ? null : rows.get(0);   // one amenity -> one row; read-only, so no @Transactional
+}
+
+
+// client1.usp_Get_Rental_Amenity_Details
+public List<Map<String, Object>> getRentalAmenityDetails(TicketRequest req) {
+    Map<String, Object> params = new HashMap<>();
+    params.put("p_Session_Key", req.getSessionKey());
+    params.put("p_Amenity_Id", req.getAmenityId());
+    return executeList("usp_Get_Rental_Amenity_Details", params);   // placeholder: use your BaseDao list method
+}
 
 
 
-// src/schema/customer/amenities/validators/customerAmenityValidator.ts
-import { FieldRule } from "../../../../utils/commonValidator";
 
-// GetAvailableAmenityDates input
-export const getAvailableAmenityDatesRules: Record<string, FieldRule> = {
+
+input GetRentalAmenityDetails {
+  amenityId: Int!
+}
+
+type Query {
+  getRentalAmenityDetails(request: GetRentalAmenityDetails!): SessionResponse
+}
+
+
+
+export const getRentalAmenityDetailsRules: Record<string, FieldRule> = {
   amenityId: { type: "integer", required: true },
-  timezone: { type: "string", required: true },
 };
 
 
 
+import { getRentalAmenityDetailsRules } from "../../schema/rentalAmenity/validators/rentalAmenityValidator"; // adjust to your path
 
-
-
-List<Map<String, Object>> getAvailableAmenityDates(TicketRequest req);
-
-
-
-export const customerAmenityTypeDefs = `
-  input GetAvailableAmenityDates {
-    amenityId: Int!
-    timezone: String!
-  }
-
-  type Query {
-    getAvailableAmenityDates(request: GetAvailableAmenityDates!): SessionResponse
-  }
-`;
-
-
-
-export async function getAvailableAmenityDates(request: any, context: any) {
-  return await callCustomerAmenityData(
+export async function getRentalAmenityDetails(request: any, context: any) {
+  return await callRentalAmenityData(
     "POST",
-    "/available-dates/get",
+    "/details/get",
     request,
     context,
-    getAvailableAmenityDatesRules
+    getRentalAmenityDetailsRules
   );
+}
 
 
+getRentalAmenityDetails: async (_: any, { request }: any, ctx: any) => {
+  ctx.logger.info("Get Rental Amenity Details", { amenityId: request?.amenityId });
+  return await getRentalAmenityDetails(request, ctx);
+},
 
-getAvailableAmenityDates: async (_: any, { request }: any, ctx: any) => {
-      ctx.logger.info("Get Available Amenity Dates", { amenityId: request?.amenityId });
-      return await getAvailableAmenityDates(request, ctx);
-    },
