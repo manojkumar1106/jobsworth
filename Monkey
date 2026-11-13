@@ -1,70 +1,18 @@
-@Operation(summary = "Get Rental Amenity Details")
-@PostMapping("/details/get")
-public ApiResponse<Map<String, Object>> getRentalAmenityDetails(@RequestBody TicketRequest req,
-                                                                @AuthenticationPrincipal Jwt jwt) {
-    if (jwt != null) {
-        req.setSessionKey(jwt.getClaims().get("origin_jti").toString());
-    }
-    return ApiResponse.success("Rental Amenity Details", rentalAmenityService.getRentalAmenityDetails(req));
-}
-
-
-Map<String, Object> getRentalAmenityDetails(TicketRequest req);
-
-
-
-
-@Override
-public Map<String, Object> getRentalAmenityDetails(TicketRequest req) {
-    log.info("Getting rental amenity details for amenityId: {}", req.getAmenityId());
-    List<Map<String, Object>> rows = rentalAmenityDao.getRentalAmenityDetails(req);
-    return rows.isEmpty() ? null : rows.get(0);   // one amenity -> one row; read-only, so no @Transactional
-}
-
-
-// client1.usp_Get_Rental_Amenity_Details
-public List<Map<String, Object>> getRentalAmenityDetails(TicketRequest req) {
-    Map<String, Object> params = new HashMap<>();
-    params.put("p_Session_Key", req.getSessionKey());
-    params.put("p_Amenity_Id", req.getAmenityId());
-    return executeList("usp_Get_Rental_Amenity_Details", params);   // placeholder: use your BaseDao list method
-}
-
-
-
-
-
-input GetRentalAmenityDetails {
+type CustomerFunnelAmenity {
+  funnelOrder: Int
   amenityId: Int!
+  amenityName: String
+  amenityDescription: String
+  amenityTypeId: Int
+  amenityTypeName: String
+  amenityTimezone: String
+  allScheduleDates: [CustomerScheduleDate]
+  squareFootage: Float
+  maxCapacityStanding: Int
+  maxCapacitySitting: Int
+  maxCapacityRoundTable: Int
+  isGeneralAdmissionIncluded: Boolean
+  isOnsite: Boolean
+  parkingUrl: String
+  pricing: [CustomerAmenityPriceType]
 }
-
-type Query {
-  getRentalAmenityDetails(request: GetRentalAmenityDetails!): SessionResponse
-}
-
-
-
-export const getRentalAmenityDetailsRules: Record<string, FieldRule> = {
-  amenityId: { type: "integer", required: true },
-};
-
-
-
-import { getRentalAmenityDetailsRules } from "../../schema/rentalAmenity/validators/rentalAmenityValidator"; // adjust to your path
-
-export async function getRentalAmenityDetails(request: any, context: any) {
-  return await callRentalAmenityData(
-    "POST",
-    "/details/get",
-    request,
-    context,
-    getRentalAmenityDetailsRules
-  );
-}
-
-
-getRentalAmenityDetails: async (_: any, { request }: any, ctx: any) => {
-  ctx.logger.info("Get Rental Amenity Details", { amenityId: request?.amenityId });
-  return await getRentalAmenityDetails(request, ctx);
-},
-
