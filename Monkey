@@ -1,4 +1,5 @@
-type CustomerFunnelAmenity {
+// CHANGED/NEW: fields shared by every amenity type
+const amenityBase = `
   funnelOrder: Int
   amenityId: Int!
   amenityName: String
@@ -6,13 +7,162 @@ type CustomerFunnelAmenity {
   amenityTypeId: Int
   amenityTypeName: String
   amenityTimezone: String
+  isInquiryFunnel: Boolean
   allScheduleDates: [CustomerScheduleDate]
-  squareFootage: Float
-  maxCapacityStanding: Int
-  maxCapacitySitting: Int
-  maxCapacityRoundTable: Int
-  isGeneralAdmissionIncluded: Boolean
-  isOnsite: Boolean
-  parkingUrl: String
   pricing: [CustomerAmenityPriceType]
-}
+`;
+
+export const customerSalesFunnelTypeDefs = `
+  type CustomerScheduleDate {
+    startDateTime: String
+    endDateTime: String
+  }
+
+  # CHANGED: was one flat "type CustomerFunnelAmenity", now interface + 2 types
+  interface CustomerFunnelAmenity {
+    ${amenityBase}
+  }
+
+  type InquiryFunnelAmenity implements CustomerFunnelAmenity {
+    ${amenityBase}
+    squareFootage: Float
+    maxCapacityStanding: Int
+    maxCapacitySitting: Int
+    maxCapacityRoundTable: Int
+    isGeneralAdmissionIncluded: Boolean
+  }
+
+  type ParkingFunnelAmenity implements CustomerFunnelAmenity {
+    ${amenityBase}
+    isOnsite: Boolean
+    parkingUrl: String
+  }
+
+  type CustomerSalesFunnelDetails {
+    salesFunnelId: Int
+    urlSlug: String
+    isDateRequired: Boolean
+    salesCutoffLocalTime: String
+  }
+
+  type CustomerSalesFunnel {
+    salesFunnelId: Int!
+    salesFunnelName: String
+    urlSlug: String
+    details: CustomerSalesFunnelDetails
+    amenities: [CustomerFunnelAmenity]
+  }
+
+  input GetAvailableAmenityDates {
+    sessionKey: String!
+    amenityId: Int!
+    timezone: String!
+  }
+
+  input GetCustomerSalesFunnelDetails { salesFunnelId: Int!, sessionKey: String! }
+  input GetCustomerSalesFunnelAmenities { salesFunnelId: Int!, sessionKey: String! }
+  input GetCustomerSalesFunnel { sessionKey: String! }
+
+  type Query {
+    getCustomerSalesFunnel(request: GetCustomerSalesFunnel!): [CustomerSalesFunnel]
+    getCustomerSalesFunnelById(request: GetCustomerSalesFunnelDetails!): CustomerSalesFunnel
+    getCustomerSalesFunnelDetails(request: GetCustomerSalesFunnelDetails!): CustomerSalesFunnelDetails
+    getCustomerSalesFunnelAmenities(request: GetCustomerSalesFunnelAmenities!): [CustomerFunnelAmenity]
+    getAvailableAmenityDates(request: GetAvailableAmenityDates!): SessionResponse
+  }
+`;
+
+
+
+
+
+import { getCustomerAmenityPricing } from "../../../service/customer/pricetypes/priceTypeService";
+// UNCHANGED: keep your existing line 3 import exactly as it is
+// (getAvailableAmenityDates, getCustomerSalesFunnel, getCustomerSalesFunnelAmenities, getCustomerSalesFunnelDetails)
+
+const unwrap = (res: any) => {
+  const d = res?.data;
+  return typeof d === "string" ? JSON.parse(d) : d ?? null;
+};
+
+// stamps the session key on each returned row so nested resolvers can use it
+const withKey = (rows: any[], sessionKey: string) =>
+  (rows ?? []).map((r) => ({ ...r, sessionKey }));
+
+const loadFunnels = async (sessionKey: string, ctx: any) =>
+  withKey(unwrap(await getCustomerSalesFunnel({ sessionKey }, ctx)) ?? [], sessionKey);
+
+const loadDetails = async (salesFunnelId: number, sessionKey: string, ctx: any) =>
+  unwrap(await getCustomerSalesFunnelDetails({ salesFunnelId, sessionKey }, ctx));
+
+const loadAmenities = async (salesFunnelId: number, sessionKey: string, ctx: any) =>
+  withKey(
+    unwrap(await getCustomerSalesFunnelAmenities({ salesFunnelId, sessionKey }, ctx)) ?? [],
+    sessionKey
+  );
+
+const loadPricing = async (amenityId: number, sessionKey: string, ctx: any) =>
+  unwrap(await getCustomerAmenityPricing({ amenityId, sessionKey }, ctx)) ?? [];
+
+const findFunnel = async (p: any, ctx: any) => {
+  p._funnel ??= loadFunnels(p.sessionKey, ctx).then(
+    (list: any[]) => list.find((f) => f.salesFunnelId === p.salesFunnelId) ?? null
+  );
+  return p._funnel;
+};
+
+// NEW: resolvers shared by both amenity types
+const amenityFields = {
+  pricing: (p: any, _: any, ctx: any) => loadPricing(p.amenityId, p.sessionKey, ctx),
+};
+
+export const customerSalesFunnelResolvers = {
+  Query: {
+    getCustomerSalesFunnel: (_: any, { request }: any, ctx: any) =>
+      loadFunnels(request.sessionKey, ctx),
+
+    // returns only id + key; other fields resolve lazily below
+    getCustomerSalesFunnelById: (_: any, { request }: any) => ({
+      salesFunnelId: request.salesFunnelId,
+      sessionKey: request.sessionKey,
+    }),
+
+    getCustomerSalesFunnelDetails: (_: any, { request }: any, ctx: any) =>
+      loadDetails(request.salesFunnelId, request.sessionKey, ctx),
+
+    getCustomerSalesFunnelAmenities: (_: any, { request }: any, ctx: any) =>
+      loadAmenities(request.salesFunnelId, request.sessionKey, ctx),
+
+    getAvailableAmenityDates: async (_: any, { request }: any, ctx: any) => {
+      ctx.logger.info("Get Available Amenity Dates", { request });
+      return await getAvailableAmenityDates(request, ctx);
+    },
+  },
+
+  CustomerSalesFunnel: {
+    salesFunnelName: async (p: any, _: any, ctx: any) =>
+      p.salesFunnelName !== undefined
+        ? p.salesFunnelName
+        : (await findFunnel(p, ctx))?.salesFunnelName ?? null,
+
+    urlSlug: async (p: any, _: any, ctx: any) =>
+      p.urlSlug !== undefined
+        ? p.urlSlug
+        : (await findFunnel(p, ctx))?.urlSlug ?? null,
+
+    details: (p: any, _: any, ctx: any) =>
+      loadDetails(p.salesFunnelId, p.sessionKey, ctx),
+
+    amenities: (p: any, _: any, ctx: any) =>
+      loadAmenities(p.salesFunnelId, p.sessionKey, ctx),
+  },
+
+  // CHANGED: was "CustomerFunnelAmenity: { pricing: ... }"
+  CustomerFunnelAmenity: {
+    __resolveType: (a: any) =>
+      a.isInquiryFunnel ? "InquiryFunnelAmenity" : "ParkingFunnelAmenity",
+  },
+  InquiryFunnelAmenity: amenityFields,
+  ParkingFunnelAmenity: amenityFields,
+};
+
