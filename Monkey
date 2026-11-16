@@ -1,5 +1,15 @@
 package com.hlt.api.controller;
 
+
+input UpsertLocationSchedule {
+  type: String!
+  locationFunctionId: Int!
+  timezone: String!
+  schedules: JSON!
+  allScheduleDates: JSON!
+}
+
+
 import com.hlt.api.service.ILocationScheduleService;
 import io.swagger.v3.oas.annotations.Operation;
 import lombok.RequiredArgsConstructor;
