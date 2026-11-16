@@ -309,3 +309,102 @@ export async function upsertLocationSchedule(request: any, context: any) {
 }
 
 
+
+
+package com.hlt.api.service.serviceimpl;
+
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.hlt.api.dao.LocationScheduleDao;
+import com.hlt.api.service.ILocationScheduleService;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.util.List;
+import java.util.Map;
+// TODO: import TicketRequest and ScheduleTimezoneUtil (existing classes)
+
+@Slf4j
+@Service
+@RequiredArgsConstructor
+public class LocationScheduleService implements ILocationScheduleService {
+
+    private final LocationScheduleDao locationScheduleDao;
+    private final ObjectMapper objectMapper;   // use your existing ObjectMapper bean
+
+    @Override
+    public List<Map<String, Object>> getLocationScheduleTypes(TicketRequest req) {
+        log.info("Getting location schedule types for locationFunctionId: {}", req.getLocationFunctionId());
+        return locationScheduleDao.getLocationScheduleTypes(req);   // read-only, no @Transactional; no dates returned
+    }
+
+    @Override
+    @Transactional
+    public void upsertLocationSchedule(TicketRequest req) {
+        log.info("Upserting location schedule for locationFunctionId: {}", req.getLocationFunctionId());
+
+        String tz = req.getTimezone();
+        TimezoneConverter.validateTimezone(tz);
+
+        // UI local -> UTC (datesJson, rruleText DTSTART/UNTIL, rule start/end); your existing util also does array/null checks
+        JsonNode schedulesUtc = ScheduleTimezoneUtil.schedulesToUtc(req.getLocationScheduleJson(), tz);
+        JsonNode allDatesUtc = ScheduleTimezoneUtil.datesToUtc(req.getAllScheduleDatesJson(), tz);
+
+        locationScheduleDao.upsertLocationSchedule(req, toJson(allDatesUtc), toJson(schedulesUtc));
+    }
+
+    private String toJson(Object value) {
+        try {
+            return objectMapper.writeValueAsString(value);
+        } catch (JsonProcessingException e) {
+            throw new IllegalArgumentException("Invalid JSON in request");
+        }
+    }
+}
+
+
+
+
+// src/schema/locationSchedule/typeDefs.ts
+// Add the inputs, and the query/mutation lines inside your existing `type Query { }` / `type Mutation { }`.
+// Assumes your schema already has the `JSON` scalar (SessionResponse.data uses it).
+export const locationScheduleTypeDefs = `
+  input GetLocationScheduleTypes {
+    locationFunctionId: Int!
+  }
+
+  input LocationScheduleRuleInput {
+    rule: JSON
+    rruleText: String
+  }
+
+  input LocationScheduleInput {
+    id: Int
+    name: String!
+    scheduleDescription: String
+    scheduleJson: LocationScheduleRuleInput!
+    locationScheduleTypeId: Int!
+    isActive: Boolean!
+    datesJson: JSON!
+  }
+
+  input UpsertLocationSchedule {
+    locationFunctionId: Int!
+    timezone: String!
+    allScheduleDatesJson: JSON!
+    locationScheduleJson: [LocationScheduleInput!]!
+  }
+
+  type Query {
+    getLocationScheduleTypes(request: GetLocationScheduleTypes!): SessionResponse
+  }
+
+  type Mutation {
+    upsertLocationSchedule(request: UpsertLocationSchedule!): SessionResponse
+  }
+`;
+
+
