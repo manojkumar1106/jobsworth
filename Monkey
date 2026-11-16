@@ -10,6 +10,28 @@ input UpsertLocationSchedule {
 }
 
 
+// src/schema/locationSchedule/validators/locationScheduleValidator.ts
+import { FieldRule } from "../../../utils/commonValidator";
+
+const requiredInteger: FieldRule = { type: "integer", required: true };
+const requiredString: FieldRule = { type: "string", required: true };
+
+// GetLocationScheduleTypes input
+export const getLocationScheduleTypesRules: Record<string, FieldRule> = {
+  type: requiredString,            // remove if you did not add `type` to the input
+  locationFunctionId: requiredInteger,
+};
+
+// UpsertLocationSchedule input
+// schedules / allScheduleDates are JSON, so their inner shape is checked in ScheduleTimezoneUtil (toArray)
+export const upsertLocationScheduleRules: Record<string, FieldRule> = {
+  type: requiredString,            // remove if you did not add `type` to the input
+  locationFunctionId: requiredInteger,
+  timezone: requiredString,
+};
+
+
+
 import com.hlt.api.service.ILocationScheduleService;
 import io.swagger.v3.oas.annotations.Operation;
 import lombok.RequiredArgsConstructor;
