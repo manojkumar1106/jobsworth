@@ -1,74 +1,210 @@
-// CHANGED/NEW: fields shared by every amenity type
-const amenityBase = `
-  funnelOrder: Int
-  amenityId: Int!
-  amenityName: String
-  amenityDescription: String
-  amenityTypeId: Int
-  amenityTypeName: String
-  amenityTimezone: String
-  isInquiryFunnel: Boolean
-  allScheduleDates: [CustomerScheduleDate]
-  pricing: [CustomerAmenityPriceType]
-`;
+package com.hlt.api.controller;
 
-export const customerSalesFunnelTypeDefs = `
-  type CustomerScheduleDate {
-    startDateTime: String
-    endDateTime: String
+import com.hlt.api.service.ILocationScheduleService;
+import io.swagger.v3.oas.annotations.Operation;
+import lombok.RequiredArgsConstructor;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+import java.util.List;
+import java.util.Map;
+// TODO: import ApiResponse and TicketRequest (same as your other controllers)
+
+@RestController
+@RequestMapping("/api/v1/location-schedules")
+@RequiredArgsConstructor
+public class LocationScheduleController {
+
+    private final ILocationScheduleService locationScheduleService;
+
+    // usp_Get_Location_Schedule_Types
+    @Operation(summary = "Get Location Schedule Types")
+    @PostMapping("/types/get")
+    public ApiResponse<List<Map<String, Object>>> getLocationScheduleTypes(@RequestBody TicketRequest req,
+                                                                           @AuthenticationPrincipal Jwt jwt) {
+        if (jwt != null) {
+            req.setSessionKey(jwt.getClaims().get("origin_jti").toString());
+        }
+        return ApiResponse.success("Location Schedule Types", locationScheduleService.getLocationScheduleTypes(req));
+    }
+
+    // usp_Upsert_Location_Schedule
+    @Operation(summary = "Upsert Location Schedule (Hours of Operation)")
+    @PostMapping("/upsert")
+    public ApiResponse<Void> upsertLocationSchedule(@RequestBody TicketRequest req,
+                                                    @AuthenticationPrincipal Jwt jwt) {
+        if (jwt != null) {
+            req.setSessionKey(jwt.getClaims().get("origin_jti").toString());
+        }
+        locationScheduleService.upsertLocationSchedule(req);
+        return ApiResponse.success("Hours of operation saved", null);
+    }
+}
+
+
+
+
+package com.hlt.api.service;
+
+import java.util.List;
+import java.util.Map;
+// TODO: import TicketRequest
+
+public interface ILocationScheduleService {
+
+    List<Map<String, Object>> getLocationScheduleTypes(TicketRequest req);
+
+    void upsertLocationSchedule(TicketRequest req);
+}
+
+
+
+package com.hlt.api.service.serviceimpl;
+
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.hlt.api.dao.LocationScheduleDao;
+import com.hlt.api.service.ILocationScheduleService;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.util.List;
+import java.util.Map;
+// TODO: import TicketRequest
+
+@Slf4j
+@Service
+@RequiredArgsConstructor
+public class LocationScheduleService implements ILocationScheduleService {
+
+    private final LocationScheduleDao locationScheduleDao;
+    private final ObjectMapper objectMapper;   // use your existing ObjectMapper bean
+
+    @Override
+    public List<Map<String, Object>> getLocationScheduleTypes(TicketRequest req) {
+        log.info("Getting location schedule types for locationFunctionId: {}", req.getLocationFunctionId());
+        return locationScheduleDao.getLocationScheduleTypes(req);   // read-only, no @Transactional
+    }
+
+    @Override
+    @Transactional
+    public void upsertLocationSchedule(TicketRequest req) {
+        log.info("Upserting location schedule for locationFunctionId: {}", req.getLocationFunctionId());
+
+        if (req.getLocationScheduleJson() == null || !req.getLocationScheduleJson().isArray()) {
+            throw new IllegalArgumentException("locationScheduleJson must be an array");
+        }
+        if (req.getAllScheduleDatesJson() == null) {
+            throw new IllegalArgumentException("allScheduleDatesJson is required");
+        }
+
+        // The proc takes both JSON params as strings
+        locationScheduleDao.upsertLocationSchedule(req,
+                toJson(req.getAllScheduleDatesJson()),
+                toJson(req.getLocationScheduleJson()));
+    }
+
+    private String toJson(Object value) {
+        try {
+            return objectMapper.writeValueAsString(value);
+        } catch (JsonProcessingException e) {
+            throw new IllegalArgumentException("Invalid JSON in request");
+        }
+    }
+}
+
+
+
+
+
+
+package com.hlt.api.dao;
+
+import org.springframework.stereotype.Repository;
+
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+// TODO: import TicketRequest
+
+@Repository
+public class LocationScheduleDao extends BaseDao {
+
+    // client1.usp_Get_Location_Schedule_Types
+    // Result set: Location_Schedule_Type_Id, Schedule_Type_Name, Schedule_Priority, Schedule_Type_Description
+    public List<Map<String, Object>> getLocationScheduleTypes(TicketRequest req) {
+        Map<String, Object> params = new HashMap<>();
+        params.put("p_Session_Key", req.getSessionKey());
+        params.put("p_Location_Function_Id", req.getLocationFunctionId());
+        return executeList("usp_Get_Location_Schedule_Types", params);   // placeholder: use your BaseDao list method
+    }
+
+    // client1.usp_Upsert_Location_Schedule
+    // p_Result_Code (OUT): 1 ok, -2 session, -3 permission, -4 parameter (null JSON / location function not enabled)
+    public void upsertLocationSchedule(TicketRequest req, String allScheduleDatesJson, String locationScheduleJson) {
+        Map<String, Object> params = new HashMap<>();
+        params.put("p_Session_Key", req.getSessionKey());
+        params.put("p_Location_Function_Id", req.getLocationFunctionId());
+        params.put("p_All_Schedule_Dates_JSON", allScheduleDatesJson);
+        params.put("p_Location_Schedule_JSON", locationScheduleJson);
+        executeVoid("usp_Upsert_Location_Schedule", params);
+    }
+}
+
+
+
+
+// Add to TicketRequest ONLY if they do not already exist (locationFunctionId already exists):
+import com.fasterxml.jackson.databind.JsonNode;
+
+private JsonNode allScheduleDatesJson;     // -> p_All_Schedule_Dates_JSON
+private JsonNode locationScheduleJson;     // -> p_Location_Schedule_JSON (array of schedules)
+
+
+
+
+
+// src/schema/locationSchedule/typeDefs.ts
+// Add the inputs, and the query/mutation lines inside your existing `type Query { }` / `type Mutation { }`.
+// Assumes your schema already has the `JSON` scalar (SessionResponse.data uses it).
+export const locationScheduleTypeDefs = `
+  input GetLocationScheduleTypes {
+    locationFunctionId: Int!
   }
 
-  # CHANGED: was one flat "type CustomerFunnelAmenity", now interface + 2 types
-  interface CustomerFunnelAmenity {
-    ${amenityBase}
+  input LocationScheduleRuleInput {
+    rule: JSON
+    rruleText: String
   }
 
-  type InquiryFunnelAmenity implements CustomerFunnelAmenity {
-    ${amenityBase}
-    squareFootage: Float
-    maxCapacityStanding: Int
-    maxCapacitySitting: Int
-    maxCapacityRoundTable: Int
-    isGeneralAdmissionIncluded: Boolean
+  input LocationScheduleInput {
+    id: Int
+    name: String!
+    scheduleDescription: String
+    scheduleJson: LocationScheduleRuleInput!
+    locationScheduleTypeId: Int!
+    isActive: Boolean!
+    datesJson: JSON
   }
 
-  type ParkingFunnelAmenity implements CustomerFunnelAmenity {
-    ${amenityBase}
-    isOnsite: Boolean
-    parkingUrl: String
+  input UpsertLocationSchedule {
+    locationFunctionId: Int!
+    allScheduleDatesJson: JSON!
+    locationScheduleJson: [LocationScheduleInput!]!
   }
-
-  type CustomerSalesFunnelDetails {
-    salesFunnelId: Int
-    urlSlug: String
-    isDateRequired: Boolean
-    salesCutoffLocalTime: String
-  }
-
-  type CustomerSalesFunnel {
-    salesFunnelId: Int!
-    salesFunnelName: String
-    urlSlug: String
-    details: CustomerSalesFunnelDetails
-    amenities: [CustomerFunnelAmenity]
-  }
-
-  input GetAvailableAmenityDates {
-    sessionKey: String!
-    amenityId: Int!
-    timezone: String!
-  }
-
-  input GetCustomerSalesFunnelDetails { salesFunnelId: Int!, sessionKey: String! }
-  input GetCustomerSalesFunnelAmenities { salesFunnelId: Int!, sessionKey: String! }
-  input GetCustomerSalesFunnel { sessionKey: String! }
 
   type Query {
-    getCustomerSalesFunnel(request: GetCustomerSalesFunnel!): [CustomerSalesFunnel]
-    getCustomerSalesFunnelById(request: GetCustomerSalesFunnelDetails!): CustomerSalesFunnel
-    getCustomerSalesFunnelDetails(request: GetCustomerSalesFunnelDetails!): CustomerSalesFunnelDetails
-    getCustomerSalesFunnelAmenities(request: GetCustomerSalesFunnelAmenities!): [CustomerFunnelAmenity]
-    getAvailableAmenityDates(request: GetAvailableAmenityDates!): SessionResponse
+    getLocationScheduleTypes(request: GetLocationScheduleTypes!): SessionResponse
+  }
+
+  type Mutation {
+    upsertLocationSchedule(request: UpsertLocationSchedule!): SessionResponse
   }
 `;
 
@@ -76,93 +212,100 @@ export const customerSalesFunnelTypeDefs = `
 
 
 
-import { getCustomerAmenityPricing } from "../../../service/customer/pricetypes/priceTypeService";
-// UNCHANGED: keep your existing line 3 import exactly as it is
-// (getAvailableAmenityDates, getCustomerSalesFunnel, getCustomerSalesFunnelAmenities, getCustomerSalesFunnelDetails)
+// src/schema/locationSchedule/resolvers.ts
+import {
+  getLocationScheduleTypes,
+  upsertLocationSchedule,
+} from "../../service/locationSchedule/locationScheduleService";
 
-const unwrap = (res: any) => {
-  const d = res?.data;
-  return typeof d === "string" ? JSON.parse(d) : d ?? null;
-};
 
-// stamps the session key on each returned row so nested resolvers can use it
-const withKey = (rows: any[], sessionKey: string) =>
-  (rows ?? []).map((r) => ({ ...r, sessionKey }));
 
-const loadFunnels = async (sessionKey: string, ctx: any) =>
-  withKey(unwrap(await getCustomerSalesFunnel({ sessionKey }, ctx)) ?? [], sessionKey);
 
-const loadDetails = async (salesFunnelId: number, sessionKey: string, ctx: any) =>
-  unwrap(await getCustomerSalesFunnelDetails({ salesFunnelId, sessionKey }, ctx));
-
-const loadAmenities = async (salesFunnelId: number, sessionKey: string, ctx: any) =>
-  withKey(
-    unwrap(await getCustomerSalesFunnelAmenities({ salesFunnelId, sessionKey }, ctx)) ?? [],
-    sessionKey
-  );
-
-const loadPricing = async (amenityId: number, sessionKey: string, ctx: any) =>
-  unwrap(await getCustomerAmenityPricing({ amenityId, sessionKey }, ctx)) ?? [];
-
-const findFunnel = async (p: any, ctx: any) => {
-  p._funnel ??= loadFunnels(p.sessionKey, ctx).then(
-    (list: any[]) => list.find((f) => f.salesFunnelId === p.salesFunnelId) ?? null
-  );
-  return p._funnel;
-};
-
-// NEW: resolvers shared by both amenity types
-const amenityFields = {
-  pricing: (p: any, _: any, ctx: any) => loadPricing(p.amenityId, p.sessionKey, ctx),
-};
-
-export const customerSalesFunnelResolvers = {
+export const locationScheduleResolvers = {
   Query: {
-    getCustomerSalesFunnel: (_: any, { request }: any, ctx: any) =>
-      loadFunnels(request.sessionKey, ctx),
-
-    // returns only id + key; other fields resolve lazily below
-    getCustomerSalesFunnelById: (_: any, { request }: any) => ({
-      salesFunnelId: request.salesFunnelId,
-      sessionKey: request.sessionKey,
-    }),
-
-    getCustomerSalesFunnelDetails: (_: any, { request }: any, ctx: any) =>
-      loadDetails(request.salesFunnelId, request.sessionKey, ctx),
-
-    getCustomerSalesFunnelAmenities: (_: any, { request }: any, ctx: any) =>
-      loadAmenities(request.salesFunnelId, request.sessionKey, ctx),
-
-    getAvailableAmenityDates: async (_: any, { request }: any, ctx: any) => {
-      ctx.logger.info("Get Available Amenity Dates", { request });
-      return await getAvailableAmenityDates(request, ctx);
+    getLocationScheduleTypes: async (_: any, { request }: any, ctx: any) => {
+      ctx.logger.info("Get Location Schedule Types", { locationFunctionId: request?.locationFunctionId });
+      return await getLocationScheduleTypes(request, ctx);
     },
   },
-
-  CustomerSalesFunnel: {
-    salesFunnelName: async (p: any, _: any, ctx: any) =>
-      p.salesFunnelName !== undefined
-        ? p.salesFunnelName
-        : (await findFunnel(p, ctx))?.salesFunnelName ?? null,
-
-    urlSlug: async (p: any, _: any, ctx: any) =>
-      p.urlSlug !== undefined
-        ? p.urlSlug
-        : (await findFunnel(p, ctx))?.urlSlug ?? null,
-
-    details: (p: any, _: any, ctx: any) =>
-      loadDetails(p.salesFunnelId, p.sessionKey, ctx),
-
-    amenities: (p: any, _: any, ctx: any) =>
-      loadAmenities(p.salesFunnelId, p.sessionKey, ctx),
+  Mutation: {
+    upsertLocationSchedule: async (_: any, { request }: any, ctx: any) => {
+      ctx.logger.info("Upsert Location Schedule", { locationFunctionId: request?.locationFunctionId });
+      return await upsertLocationSchedule(request, ctx);
+    },
   },
-
-  // CHANGED: was "CustomerFunnelAmenity: { pricing: ... }"
-  CustomerFunnelAmenity: {
-    __resolveType: (a: any) =>
-      a.isInquiryFunnel ? "InquiryFunnelAmenity" : "ParkingFunnelAmenity",
-  },
-  InquiryFunnelAmenity: amenityFields,
-  ParkingFunnelAmenity: amenityFields,
 };
+
+
+
+
+// src/schema/locationSchedule/validators/locationScheduleValidator.ts
+import { FieldRule } from "../../../utils/commonValidator";
+
+const requiredInteger: FieldRule = { type: "integer", required: true };
+
+// GetLocationScheduleTypes input
+export const getLocationScheduleTypesRules: Record<string, FieldRule> = {
+  locationFunctionId: requiredInteger,
+};
+
+// UpsertLocationSchedule input
+// Shape of each schedule (name, locationScheduleTypeId, isActive, scheduleJson) is enforced by the GraphQL input types.
+export const upsertLocationScheduleRules: Record<string, FieldRule> = {
+  locationFunctionId: requiredInteger,
+};
+
+
+
+
+// src/service/locationSchedule/locationScheduleService.ts
+import { GraphQLError } from "graphql";
+import { FieldRule, validateRequest } from "../../utils/commonValidator";
+import { httpClient } from "../../utils/http/httpClient";
+import {
+  getLocationScheduleTypesRules,
+  upsertLocationScheduleRules,
+} from "../../schema/locationSchedule/validators/locationScheduleValidator";
+
+async function callLocationScheduleData(
+  method: string,
+  endpoint: string,
+  request: any,
+  context: any,
+  validationRules?: Record<string, FieldRule>
+) {
+  if (validationRules) {
+    const errors = validateRequest(request, validationRules);
+
+    if (errors.length > 0) {
+      throw new GraphQLError(`Validation Failed: ${errors.join(", ")}`, {
+        extensions: {
+          code: "BAD_USER_INPUT",
+          errors,
+        },
+      });
+    }
+  }
+
+  const baseUrl = process.env.SPRINGBOOT_BASE_ENDPOINT;
+  const url = `${baseUrl}/api/v1/location-schedules${endpoint}`;
+  return await httpClient(
+    url,
+    {
+      method: method,
+      body: method === "GET" ? undefined : request,
+    },
+    context.logger,
+    context
+  );
+}
+
+export async function getLocationScheduleTypes(request: any, context: any) {
+  return await callLocationScheduleData("POST", "/types/get", request, context, getLocationScheduleTypesRules);
+}
+
+export async function upsertLocationSchedule(request: any, context: any) {
+  return await callLocationScheduleData("POST", "/upsert", request, context, upsertLocationScheduleRules);
+}
+
 
