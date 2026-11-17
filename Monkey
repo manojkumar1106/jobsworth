@@ -1,35 +1,11 @@
-// CHANGED: shared fields for every amenity type (ids 1,2,3,4,5)
-const amenityBase = `
-  funnelOrder: Int
-  amenityId: Int!
-  amenityName: String
-  amenityDescription: String
-  amenityTypeId: Int
-  amenityTypeName: String
-  amenityTimezone: String
-  allScheduleDates: [CustomerScheduleDate]
-  pricing: [CustomerAmenityPriceType]
-`;
-
 export const customerSalesFunnelTypeDefs = `
   type CustomerScheduleDate {
     startDateTime: String
     endDateTime: String
   }
 
-  # CHANGED: was one flat "type CustomerFunnelAmenity"; now an interface + 3 types
-  interface CustomerFunnelAmenity {
-    ${amenityBase}
-  }
-
-  # amenity type ids 1, 2, 3 (General / Seated / Timed): base fields only
-  type StandardFunnelAmenity implements CustomerFunnelAmenity {
-    ${amenityBase}
-  }
-
-  # amenity type id 4 (Rental): base + rental fields
-  type RentalFunnelAmenity implements CustomerFunnelAmenity {
-    ${amenityBase}
+  # NEW: type-specific fields only
+  type RentalConfiguration {
     squareFootage: Float
     maxCapacityStanding: Int
     maxCapacitySitting: Int
@@ -37,11 +13,25 @@ export const customerSalesFunnelTypeDefs = `
     isGeneralAdmissionIncluded: Boolean
   }
 
-  # amenity type id 5 (Parking): base + parking fields
-  type ParkingFunnelAmenity implements CustomerFunnelAmenity {
-    ${amenityBase}
+  type ParkingConfiguration {
     isOnsite: Boolean
     parkingUrl: String
+  }
+
+  union AmenityConfiguration = RentalConfiguration | ParkingConfiguration
+
+  # CHANGED: one plain type again; the rental/parking fields moved into configuration
+  type CustomerFunnelAmenity {
+    funnelOrder: Int
+    amenityId: Int!
+    amenityName: String
+    amenityDescription: String
+    amenityTypeId: Int
+    amenityTypeName: String
+    amenityTimezone: String
+    configuration: AmenityConfiguration
+    allScheduleDates: [CustomerScheduleDate]
+    pricing: [CustomerAmenityPriceType]
   }
 
   type CustomerSalesFunnelDetails {
@@ -117,20 +107,29 @@ const findFunnel = async (p: any, ctx: any) => {
   return p._funnel;
 };
 
-// NEW: amenity type id -> GraphQL type. Anything not listed (1, 2, 3) is Standard.
+// NEW: amenity type ids (Shared.Amenity_Type)
 const RENTAL_TYPE_ID = 4;
 const PARKING_TYPE_ID = 5;
 
-const amenityResolveType = (a: any) => {
+// NEW: builds only the fields that belong to the amenity's type; null for 1, 2, 3
+const buildConfiguration = (a: any) => {
   const typeId = Number(a.amenityTypeId);
-  if (typeId === RENTAL_TYPE_ID) return "RentalFunnelAmenity";
-  if (typeId === PARKING_TYPE_ID) return "ParkingFunnelAmenity";
-  return "StandardFunnelAmenity";
-};
-
-// NEW: resolvers shared by all amenity types (pricing stays as before)
-const amenityFields = {
-  pricing: (p: any, _: any, ctx: any) => loadPricing(p.amenityId, p.sessionKey, ctx),
+  if (typeId === RENTAL_TYPE_ID)
+    return {
+      __typename: "RentalConfiguration",
+      squareFootage: a.squareFootage,
+      maxCapacityStanding: a.maxCapacityStanding,
+      maxCapacitySitting: a.maxCapacitySitting,
+      maxCapacityRoundTable: a.maxCapacityRoundTable,
+      isGeneralAdmissionIncluded: a.isGeneralAdmissionIncluded,
+    };
+  if (typeId === PARKING_TYPE_ID)
+    return {
+      __typename: "ParkingConfiguration",
+      isOnsite: a.isOnsite,
+      parkingUrl: a.parkingUrl,
+    };
+  return null;
 };
 
 export const customerSalesFunnelResolvers = {
@@ -174,9 +173,15 @@ export const customerSalesFunnelResolvers = {
       loadAmenities(p.salesFunnelId, p.sessionKey, ctx),
   },
 
-  // CHANGED: was "CustomerFunnelAmenity: { pricing: ... }"
-  CustomerFunnelAmenity: { __resolveType: amenityResolveType },
-  StandardFunnelAmenity: amenityFields,
-  RentalFunnelAmenity: amenityFields,
-  ParkingFunnelAmenity: amenityFields,
+  // CHANGED: pricing stays here, and configuration is added
+  CustomerFunnelAmenity: {
+    pricing: (p: any, _: any, ctx: any) =>
+      loadPricing(p.amenityId, p.sessionKey, ctx),
+    configuration: (p: any) => buildConfiguration(p),
+  },
+
+  // NEW: tells GraphQL which union member the object is
+  AmenityConfiguration: {
+    __resolveType: (o: any) => o.__typename,
+  },
 };
