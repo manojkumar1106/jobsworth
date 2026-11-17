@@ -1,442 +1,58 @@
-package com.hlt.api.controller;
+@Operation(summary = "Get Location Schedule (Hours of Operation)")
+@PostMapping("/get")
+public ApiResponse<Map<String, Object>> getLocationSchedule(@RequestBody TicketRequest req,
+                                                            @AuthenticationPrincipal Jwt jwt) {
+    if (jwt != null) {
+        req.setSessionKey(jwt.getClaims().get("origin_jti").toString());
+    }
+    return ApiResponse.success("Location Schedule", locationScheduleService.getLocationSchedule(req));
+}
+
+Map<String, Object> getLocationSchedule(TicketRequest req);
 
 
-input UpsertLocationSchedule {
+
+// client1.usp_Get_Location_Schedule  -> 2 result sets
+public List<List<Map<String, Object>>> getLocationSchedule(TicketRequest req) {
+    Map<String, Object> params = new HashMap<>();
+    params.put("p_Session_Key", req.getSessionKey());
+    params.put("p_Location_Function_Id", req.getLocationFunctionId());
+    return executeMultiResultSets("usp_Get_Location_Schedule", params);   // same call your AmenityDao.getAmenitySchedule uses
+}
+
+
+
+input GetLocationSchedule {
   type: String!
   locationFunctionId: Int!
-  timezone: String!
-  schedules: JSON!
-  allScheduleDates: JSON!
+}
+
+type Query {
+  getLocationSchedule(request: GetLocationSchedule!): SessionResponse
 }
 
 
-// src/schema/locationSchedule/validators/locationScheduleValidator.ts
-import { FieldRule } from "../../../utils/commonValidator";
 
-const requiredInteger: FieldRule = { type: "integer", required: true };
-const requiredString: FieldRule = { type: "string", required: true };
-
-// GetLocationScheduleTypes input
-export const getLocationScheduleTypesRules: Record<string, FieldRule> = {
+export const getLocationScheduleRules: Record<string, FieldRule> = {
   type: requiredString,            // remove if you did not add `type` to the input
   locationFunctionId: requiredInteger,
 };
 
-// UpsertLocationSchedule input
-// schedules / allScheduleDates are JSON, so their inner shape is checked in ScheduleTimezoneUtil (toArray)
-export const upsertLocationScheduleRules: Record<string, FieldRule> = {
-  type: requiredString,            // remove if you did not add `type` to the input
-  locationFunctionId: requiredInteger,
-  timezone: requiredString,
-};
 
 
 
-import com.hlt.api.service.ILocationScheduleService;
-import io.swagger.v3.oas.annotations.Operation;
-import lombok.RequiredArgsConstructor;
-import org.springframework.security.core.annotation.AuthenticationPrincipal;
-import org.springframework.security.oauth2.jwt.Jwt;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
 
-import java.util.List;
-import java.util.Map;
-// TODO: import ApiResponse and TicketRequest (same as your other controllers)
 
-@RestController
-@RequestMapping("/api/v1/location-schedules")
-@RequiredArgsConstructor
-public class LocationScheduleController {
-
-    private final ILocationScheduleService locationScheduleService;
-
-    // usp_Get_Location_Schedule_Types
-    @Operation(summary = "Get Location Schedule Types")
-    @PostMapping("/types/get")
-    public ApiResponse<List<Map<String, Object>>> getLocationScheduleTypes(@RequestBody TicketRequest req,
-                                                                           @AuthenticationPrincipal Jwt jwt) {
-        if (jwt != null) {
-            req.setSessionKey(jwt.getClaims().get("origin_jti").toString());
-        }
-        return ApiResponse.success("Location Schedule Types", locationScheduleService.getLocationScheduleTypes(req));
-    }
-
-    // usp_Upsert_Location_Schedule
-    @Operation(summary = "Upsert Location Schedule (Hours of Operation)")
-    @PostMapping("/upsert")
-    public ApiResponse<Void> upsertLocationSchedule(@RequestBody TicketRequest req,
-                                                    @AuthenticationPrincipal Jwt jwt) {
-        if (jwt != null) {
-            req.setSessionKey(jwt.getClaims().get("origin_jti").toString());
-        }
-        locationScheduleService.upsertLocationSchedule(req);
-        return ApiResponse.success("Hours of operation saved", null);
-    }
+// add getLocationScheduleRules to the existing validator import
+export async function getLocationSchedule(request: any, context: any) {
+  return await callLocationScheduleData("POST", "/get", request, context, getLocationScheduleRules);
 }
 
 
 
 
-package com.hlt.api.service;
-
-import java.util.List;
-import java.util.Map;
-// TODO: import TicketRequest
-
-public interface ILocationScheduleService {
-
-    List<Map<String, Object>> getLocationScheduleTypes(TicketRequest req);
-
-    void upsertLocationSchedule(TicketRequest req);
-}
-
-
-
-package com.hlt.api.service.serviceimpl;
-
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.hlt.api.dao.LocationScheduleDao;
-import com.hlt.api.service.ILocationScheduleService;
-import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
-
-import java.util.List;
-import java.util.Map;
-// TODO: import TicketRequest
-
-@Slf4j
-@Service
-@RequiredArgsConstructor
-public class LocationScheduleService implements ILocationScheduleService {
-
-    private final LocationScheduleDao locationScheduleDao;
-    private final ObjectMapper objectMapper;   // use your existing ObjectMapper bean
-
-    @Override
-    public List<Map<String, Object>> getLocationScheduleTypes(TicketRequest req) {
-        log.info("Getting location schedule types for locationFunctionId: {}", req.getLocationFunctionId());
-        return locationScheduleDao.getLocationScheduleTypes(req);   // read-only, no @Transactional
-    }
-
-    @Override
-    @Transactional
-    public void upsertLocationSchedule(TicketRequest req) {
-        log.info("Upserting location schedule for locationFunctionId: {}", req.getLocationFunctionId());
-
-        if (req.getLocationScheduleJson() == null || !req.getLocationScheduleJson().isArray()) {
-            throw new IllegalArgumentException("locationScheduleJson must be an array");
-        }
-        if (req.getAllScheduleDatesJson() == null) {
-            throw new IllegalArgumentException("allScheduleDatesJson is required");
-        }
-
-        // The proc takes both JSON params as strings
-        locationScheduleDao.upsertLocationSchedule(req,
-                toJson(req.getAllScheduleDatesJson()),
-                toJson(req.getLocationScheduleJson()));
-    }
-
-    private String toJson(Object value) {
-        try {
-            return objectMapper.writeValueAsString(value);
-        } catch (JsonProcessingException e) {
-            throw new IllegalArgumentException("Invalid JSON in request");
-        }
-    }
-}
-
-
-
-
-
-
-package com.hlt.api.dao;
-
-import org.springframework.stereotype.Repository;
-
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-// TODO: import TicketRequest
-
-@Repository
-public class LocationScheduleDao extends BaseDao {
-
-    // client1.usp_Get_Location_Schedule_Types
-    // Result set: Location_Schedule_Type_Id, Schedule_Type_Name, Schedule_Priority, Schedule_Type_Description
-    public List<Map<String, Object>> getLocationScheduleTypes(TicketRequest req) {
-        Map<String, Object> params = new HashMap<>();
-        params.put("p_Session_Key", req.getSessionKey());
-        params.put("p_Location_Function_Id", req.getLocationFunctionId());
-        return executeList("usp_Get_Location_Schedule_Types", params);   // placeholder: use your BaseDao list method
-    }
-
-    // client1.usp_Upsert_Location_Schedule
-    // p_Result_Code (OUT): 1 ok, -2 session, -3 permission, -4 parameter (null JSON / location function not enabled)
-    public void upsertLocationSchedule(TicketRequest req, String allScheduleDatesJson, String locationScheduleJson) {
-        Map<String, Object> params = new HashMap<>();
-        params.put("p_Session_Key", req.getSessionKey());
-        params.put("p_Location_Function_Id", req.getLocationFunctionId());
-        params.put("p_All_Schedule_Dates_JSON", allScheduleDatesJson);
-        params.put("p_Location_Schedule_JSON", locationScheduleJson);
-        executeVoid("usp_Upsert_Location_Schedule", params);
-    }
-}
-
-
-
-
-// Add to TicketRequest ONLY if they do not already exist (locationFunctionId already exists):
-import com.fasterxml.jackson.databind.JsonNode;
-
-private JsonNode allScheduleDatesJson;     // -> p_All_Schedule_Dates_JSON
-private JsonNode locationScheduleJson;     // -> p_Location_Schedule_JSON (array of schedules)
-
-
-
-
-
-// src/schema/locationSchedule/typeDefs.ts
-// Add the inputs, and the query/mutation lines inside your existing `type Query { }` / `type Mutation { }`.
-// Assumes your schema already has the `JSON` scalar (SessionResponse.data uses it).
-export const locationScheduleTypeDefs = `
-  input GetLocationScheduleTypes {
-    locationFunctionId: Int!
-  }
-
-  input LocationScheduleRuleInput {
-    rule: JSON
-    rruleText: String
-  }
-
-  input LocationScheduleInput {
-    id: Int
-    name: String!
-    scheduleDescription: String
-    scheduleJson: LocationScheduleRuleInput!
-    locationScheduleTypeId: Int!
-    isActive: Boolean!
-    datesJson: JSON
-  }
-
-  input UpsertLocationSchedule {
-    locationFunctionId: Int!
-    allScheduleDatesJson: JSON!
-    locationScheduleJson: [LocationScheduleInput!]!
-  }
-
-  type Query {
-    getLocationScheduleTypes(request: GetLocationScheduleTypes!): SessionResponse
-  }
-
-  type Mutation {
-    upsertLocationSchedule(request: UpsertLocationSchedule!): SessionResponse
-  }
-`;
-
-
-
-
-
-// src/schema/locationSchedule/resolvers.ts
-import {
-  getLocationScheduleTypes,
-  upsertLocationSchedule,
-} from "../../service/locationSchedule/locationScheduleService";
-
-
-
-
-export const locationScheduleResolvers = {
-  Query: {
-    getLocationScheduleTypes: async (_: any, { request }: any, ctx: any) => {
-      ctx.logger.info("Get Location Schedule Types", { locationFunctionId: request?.locationFunctionId });
-      return await getLocationScheduleTypes(request, ctx);
-    },
-  },
-  Mutation: {
-    upsertLocationSchedule: async (_: any, { request }: any, ctx: any) => {
-      ctx.logger.info("Upsert Location Schedule", { locationFunctionId: request?.locationFunctionId });
-      return await upsertLocationSchedule(request, ctx);
-    },
-  },
-};
-
-
-
-
-// src/schema/locationSchedule/validators/locationScheduleValidator.ts
-import { FieldRule } from "../../../utils/commonValidator";
-
-const requiredInteger: FieldRule = { type: "integer", required: true };
-
-// GetLocationScheduleTypes input
-export const getLocationScheduleTypesRules: Record<string, FieldRule> = {
-  locationFunctionId: requiredInteger,
-};
-
-// UpsertLocationSchedule input
-// Shape of each schedule (name, locationScheduleTypeId, isActive, scheduleJson) is enforced by the GraphQL input types.
-export const upsertLocationScheduleRules: Record<string, FieldRule> = {
-  locationFunctionId: requiredInteger,
-};
-
-
-
-
-// src/service/locationSchedule/locationScheduleService.ts
-import { GraphQLError } from "graphql";
-import { FieldRule, validateRequest } from "../../utils/commonValidator";
-import { httpClient } from "../../utils/http/httpClient";
-import {
-  getLocationScheduleTypesRules,
-  upsertLocationScheduleRules,
-} from "../../schema/locationSchedule/validators/locationScheduleValidator";
-
-async function callLocationScheduleData(
-  method: string,
-  endpoint: string,
-  request: any,
-  context: any,
-  validationRules?: Record<string, FieldRule>
-) {
-  if (validationRules) {
-    const errors = validateRequest(request, validationRules);
-
-    if (errors.length > 0) {
-      throw new GraphQLError(`Validation Failed: ${errors.join(", ")}`, {
-        extensions: {
-          code: "BAD_USER_INPUT",
-          errors,
-        },
-      });
-    }
-  }
-
-  const baseUrl = process.env.SPRINGBOOT_BASE_ENDPOINT;
-  const url = `${baseUrl}/api/v1/location-schedules${endpoint}`;
-  return await httpClient(
-    url,
-    {
-      method: method,
-      body: method === "GET" ? undefined : request,
-    },
-    context.logger,
-    context
-  );
-}
-
-export async function getLocationScheduleTypes(request: any, context: any) {
-  return await callLocationScheduleData("POST", "/types/get", request, context, getLocationScheduleTypesRules);
-}
-
-export async function upsertLocationSchedule(request: any, context: any) {
-  return await callLocationScheduleData("POST", "/upsert", request, context, upsertLocationScheduleRules);
-}
-
-
-
-
-package com.hlt.api.service.serviceimpl;
-
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.hlt.api.dao.LocationScheduleDao;
-import com.hlt.api.service.ILocationScheduleService;
-import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
-
-import java.util.List;
-import java.util.Map;
-// TODO: import TicketRequest and ScheduleTimezoneUtil (existing classes)
-
-@Slf4j
-@Service
-@RequiredArgsConstructor
-public class LocationScheduleService implements ILocationScheduleService {
-
-    private final LocationScheduleDao locationScheduleDao;
-    private final ObjectMapper objectMapper;   // use your existing ObjectMapper bean
-
-    @Override
-    public List<Map<String, Object>> getLocationScheduleTypes(TicketRequest req) {
-        log.info("Getting location schedule types for locationFunctionId: {}", req.getLocationFunctionId());
-        return locationScheduleDao.getLocationScheduleTypes(req);   // read-only, no @Transactional; no dates returned
-    }
-
-    @Override
-    @Transactional
-    public void upsertLocationSchedule(TicketRequest req) {
-        log.info("Upserting location schedule for locationFunctionId: {}", req.getLocationFunctionId());
-
-        String tz = req.getTimezone();
-        TimezoneConverter.validateTimezone(tz);
-
-        // UI local -> UTC (datesJson, rruleText DTSTART/UNTIL, rule start/end); your existing util also does array/null checks
-        JsonNode schedulesUtc = ScheduleTimezoneUtil.schedulesToUtc(req.getLocationScheduleJson(), tz);
-        JsonNode allDatesUtc = ScheduleTimezoneUtil.datesToUtc(req.getAllScheduleDatesJson(), tz);
-
-        locationScheduleDao.upsertLocationSchedule(req, toJson(allDatesUtc), toJson(schedulesUtc));
-    }
-
-    private String toJson(Object value) {
-        try {
-            return objectMapper.writeValueAsString(value);
-        } catch (JsonProcessingException e) {
-            throw new IllegalArgumentException("Invalid JSON in request");
-        }
-    }
-}
-
-
-
-
-// src/schema/locationSchedule/typeDefs.ts
-// Add the inputs, and the query/mutation lines inside your existing `type Query { }` / `type Mutation { }`.
-// Assumes your schema already has the `JSON` scalar (SessionResponse.data uses it).
-export const locationScheduleTypeDefs = `
-  input GetLocationScheduleTypes {
-    locationFunctionId: Int!
-  }
-
-  input LocationScheduleRuleInput {
-    rule: JSON
-    rruleText: String
-  }
-
-  input LocationScheduleInput {
-    id: Int
-    name: String!
-    scheduleDescription: String
-    scheduleJson: LocationScheduleRuleInput!
-    locationScheduleTypeId: Int!
-    isActive: Boolean!
-    datesJson: JSON!
-  }
-
-  input UpsertLocationSchedule {
-    locationFunctionId: Int!
-    timezone: String!
-    allScheduleDatesJson: JSON!
-    locationScheduleJson: [LocationScheduleInput!]!
-  }
-
-  type Query {
-    getLocationScheduleTypes(request: GetLocationScheduleTypes!): SessionResponse
-  }
-
-  type Mutation {
-    upsertLocationSchedule(request: UpsertLocationSchedule!): SessionResponse
-  }
-`;
-
+getLocationSchedule: async (_: any, { request }: any, ctx: any) => {
+  ctx.logger.info("Get Location Schedule", { locationFunctionId: request?.locationFunctionId });
+  return await getLocationSchedule(request, ctx);
+},
 
