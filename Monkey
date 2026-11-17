@@ -56,3 +56,41 @@ getLocationSchedule: async (_: any, { request }: any, ctx: any) => {
   return await getLocationSchedule(request, ctx);
 },
 
+
+@Override
+public List<Map<String, Object>> getLocationSchedule(TicketRequest req) {
+    List<List<Map<String, Object>>> resultSets = locationScheduleDao.getLocationSchedule(req);
+    List<Map<String, Object>> header = resultSets.get(0);
+    List<Map<String, Object>> rows = resultSets.get(1);
+
+    Map<String, Object> response = new LinkedHashMap<>();
+    response.put("locationFunctionId", req.getLocationFunctionId());
+    response.put("allScheduleDates", List.of());
+    response.put("schedules", List.of());
+
+    if (header.isEmpty() || rows.isEmpty()) {
+        return List.of(response);
+    }
+
+    String timezone = (String) header.get(0).get("timezone");
+    TimezoneConverter.validateTimezone(timezone);
+    response.put("timezone", timezone);
+
+    response.put("allScheduleDates",
+            ScheduleTimezoneUtil.datesToLocal(header.get(0).get("allScheduleDates"), timezone));
+
+    List<Map<String, Object>> schedules = new ArrayList<>();
+    for (Map<String, Object> row : rows) {
+        row.put("amenityScheduleId", row.get("locationScheduleId"));
+        row.put("amenityScheduleTypeId", row.get("locationScheduleTypeId"));
+
+        Map<String, Object> schedule = ScheduleTimezoneUtil.scheduleToLocal(row, timezone);
+        schedule.put("locationScheduleTypeId", schedule.remove("amenityScheduleTypeId"));
+        schedules.add(schedule);
+    }
+    response.put("schedules", schedules);
+
+    return List.of(response);
+}
+
+
