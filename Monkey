@@ -1,96 +1,182 @@
-@Operation(summary = "Get Location Schedule (Hours of Operation)")
-@PostMapping("/get")
-public ApiResponse<Map<String, Object>> getLocationSchedule(@RequestBody TicketRequest req,
-                                                            @AuthenticationPrincipal Jwt jwt) {
-    if (jwt != null) {
-        req.setSessionKey(jwt.getClaims().get("origin_jti").toString());
-    }
-    return ApiResponse.success("Location Schedule", locationScheduleService.getLocationSchedule(req));
-}
+// CHANGED: shared fields for every amenity type (ids 1,2,3,4,5)
+const amenityBase = `
+  funnelOrder: Int
+  amenityId: Int!
+  amenityName: String
+  amenityDescription: String
+  amenityTypeId: Int
+  amenityTypeName: String
+  amenityTimezone: String
+  allScheduleDates: [CustomerScheduleDate]
+  pricing: [CustomerAmenityPriceType]
+`;
 
-Map<String, Object> getLocationSchedule(TicketRequest req);
+export const customerSalesFunnelTypeDefs = `
+  type CustomerScheduleDate {
+    startDateTime: String
+    endDateTime: String
+  }
+
+  # CHANGED: was one flat "type CustomerFunnelAmenity"; now an interface + 3 types
+  interface CustomerFunnelAmenity {
+    ${amenityBase}
+  }
+
+  # amenity type ids 1, 2, 3 (General / Seated / Timed): base fields only
+  type StandardFunnelAmenity implements CustomerFunnelAmenity {
+    ${amenityBase}
+  }
+
+  # amenity type id 4 (Rental): base + rental fields
+  type RentalFunnelAmenity implements CustomerFunnelAmenity {
+    ${amenityBase}
+    squareFootage: Float
+    maxCapacityStanding: Int
+    maxCapacitySitting: Int
+    maxCapacityRoundTable: Int
+    isGeneralAdmissionIncluded: Boolean
+  }
+
+  # amenity type id 5 (Parking): base + parking fields
+  type ParkingFunnelAmenity implements CustomerFunnelAmenity {
+    ${amenityBase}
+    isOnsite: Boolean
+    parkingUrl: String
+  }
+
+  type CustomerSalesFunnelDetails {
+    salesFunnelId: Int
+    urlSlug: String
+    isDateRequired: Boolean
+    salesCutoffLocalTime: String
+  }
+
+  type CustomerSalesFunnel {
+    salesFunnelId: Int!
+    salesFunnelName: String
+    urlSlug: String
+    isInquiryFunnel: Boolean
+    details: CustomerSalesFunnelDetails
+    amenities: [CustomerFunnelAmenity]
+  }
+
+  input GetAvailableAmenityDates {
+    sessionKey: String!
+    amenityId: Int!
+    timezone: String!
+  }
+
+  input GetCustomerSalesFunnelDetails { salesFunnelId: Int!, sessionKey: String! }
+  input GetCustomerSalesFunnelAmenities { salesFunnelId: Int!, sessionKey: String! }
+  input GetCustomerSalesFunnel { sessionKey: String! }
+
+  type Query {
+    getCustomerSalesFunnel(request: GetCustomerSalesFunnel!): [CustomerSalesFunnel]
+    getCustomerSalesFunnelById(request: GetCustomerSalesFunnelDetails!): CustomerSalesFunnel
+    getCustomerSalesFunnelDetails(request: GetCustomerSalesFunnelDetails!): CustomerSalesFunnelDetails
+    getCustomerSalesFunnelAmenities(request: GetCustomerSalesFunnelAmenities!): [CustomerFunnelAmenity]
+    getAvailableAmenityDates(request: GetAvailableAmenityDates!): SessionResponse
+  }
+`;
 
 
 
-// client1.usp_Get_Location_Schedule  -> 2 result sets
-public List<List<Map<String, Object>>> getLocationSchedule(TicketRequest req) {
-    Map<String, Object> params = new HashMap<>();
-    params.put("p_Session_Key", req.getSessionKey());
-    params.put("p_Location_Function_Id", req.getLocationFunctionId());
-    return executeMultiResultSets("usp_Get_Location_Schedule", params);   // same call your AmenityDao.getAmenitySchedule uses
-}
 
+import { getCustomerAmenityPricing } from "../../../service/customer/pricetypes/priceTypeService";
+// UNCHANGED: keep your existing line 3 import exactly as it is
+// (getAvailableAmenityDates, getCustomerSalesFunnel, getCustomerSalesFunnelAmenities, getCustomerSalesFunnelDetails)
 
-
-input GetLocationSchedule {
-  type: String!
-  locationFunctionId: Int!
-}
-
-type Query {
-  getLocationSchedule(request: GetLocationSchedule!): SessionResponse
-}
-
-
-
-export const getLocationScheduleRules: Record<string, FieldRule> = {
-  type: requiredString,            // remove if you did not add `type` to the input
-  locationFunctionId: requiredInteger,
+const unwrap = (res: any) => {
+  const d = res?.data;
+  return typeof d === "string" ? JSON.parse(d) : d ?? null;
 };
 
+// stamps the session key on each returned row so nested resolvers can use it
+const withKey = (rows: any[], sessionKey: string) =>
+  (rows ?? []).map((r) => ({ ...r, sessionKey }));
 
+const loadFunnels = async (sessionKey: string, ctx: any) =>
+  withKey(unwrap(await getCustomerSalesFunnel({ sessionKey }, ctx)) ?? [], sessionKey);
 
+const loadDetails = async (salesFunnelId: number, sessionKey: string, ctx: any) =>
+  unwrap(await getCustomerSalesFunnelDetails({ salesFunnelId, sessionKey }, ctx));
 
+const loadAmenities = async (salesFunnelId: number, sessionKey: string, ctx: any) =>
+  withKey(
+    unwrap(await getCustomerSalesFunnelAmenities({ salesFunnelId, sessionKey }, ctx)) ?? [],
+    sessionKey
+  );
 
+const loadPricing = async (amenityId: number, sessionKey: string, ctx: any) =>
+  unwrap(await getCustomerAmenityPricing({ amenityId, sessionKey }, ctx)) ?? [];
 
-// add getLocationScheduleRules to the existing validator import
-export async function getLocationSchedule(request: any, context: any) {
-  return await callLocationScheduleData("POST", "/get", request, context, getLocationScheduleRules);
-}
+const findFunnel = async (p: any, ctx: any) => {
+  p._funnel ??= loadFunnels(p.sessionKey, ctx).then(
+    (list: any[]) => list.find((f) => f.salesFunnelId === p.salesFunnelId) ?? null
+  );
+  return p._funnel;
+};
 
+// NEW: amenity type id -> GraphQL type. Anything not listed (1, 2, 3) is Standard.
+const RENTAL_TYPE_ID = 4;
+const PARKING_TYPE_ID = 5;
 
+const amenityResolveType = (a: any) => {
+  const typeId = Number(a.amenityTypeId);
+  if (typeId === RENTAL_TYPE_ID) return "RentalFunnelAmenity";
+  if (typeId === PARKING_TYPE_ID) return "ParkingFunnelAmenity";
+  return "StandardFunnelAmenity";
+};
 
+// NEW: resolvers shared by all amenity types (pricing stays as before)
+const amenityFields = {
+  pricing: (p: any, _: any, ctx: any) => loadPricing(p.amenityId, p.sessionKey, ctx),
+};
 
-getLocationSchedule: async (_: any, { request }: any, ctx: any) => {
-  ctx.logger.info("Get Location Schedule", { locationFunctionId: request?.locationFunctionId });
-  return await getLocationSchedule(request, ctx);
-},
+export const customerSalesFunnelResolvers = {
+  Query: {
+    getCustomerSalesFunnel: (_: any, { request }: any, ctx: any) =>
+      loadFunnels(request.sessionKey, ctx),
 
+    // returns only id + key; other fields resolve lazily below
+    getCustomerSalesFunnelById: (_: any, { request }: any) => ({
+      salesFunnelId: request.salesFunnelId,
+      sessionKey: request.sessionKey,
+    }),
 
-@Override
-public List<Map<String, Object>> getLocationSchedule(TicketRequest req) {
-    List<List<Map<String, Object>>> resultSets = locationScheduleDao.getLocationSchedule(req);
-    List<Map<String, Object>> header = resultSets.get(0);
-    List<Map<String, Object>> rows = resultSets.get(1);
+    getCustomerSalesFunnelDetails: (_: any, { request }: any, ctx: any) =>
+      loadDetails(request.salesFunnelId, request.sessionKey, ctx),
 
-    Map<String, Object> response = new LinkedHashMap<>();
-    response.put("locationFunctionId", req.getLocationFunctionId());
-    response.put("allScheduleDates", List.of());
-    response.put("schedules", List.of());
+    getCustomerSalesFunnelAmenities: (_: any, { request }: any, ctx: any) =>
+      loadAmenities(request.salesFunnelId, request.sessionKey, ctx),
 
-    if (header.isEmpty() || rows.isEmpty()) {
-        return List.of(response);
-    }
+    getAvailableAmenityDates: async (_: any, { request }: any, ctx: any) => {
+      ctx.logger.info("Get Available Amenity Dates", { request });
+      return await getAvailableAmenityDates(request, ctx);
+    },
+  },
 
-    String timezone = (String) header.get(0).get("timezone");
-    TimezoneConverter.validateTimezone(timezone);
-    response.put("timezone", timezone);
+  CustomerSalesFunnel: {
+    salesFunnelName: async (p: any, _: any, ctx: any) =>
+      p.salesFunnelName !== undefined
+        ? p.salesFunnelName
+        : (await findFunnel(p, ctx))?.salesFunnelName ?? null,
 
-    response.put("allScheduleDates",
-            ScheduleTimezoneUtil.datesToLocal(header.get(0).get("allScheduleDates"), timezone));
+    urlSlug: async (p: any, _: any, ctx: any) =>
+      p.urlSlug !== undefined
+        ? p.urlSlug
+        : (await findFunnel(p, ctx))?.urlSlug ?? null,
 
-    List<Map<String, Object>> schedules = new ArrayList<>();
-    for (Map<String, Object> row : rows) {
-        row.put("amenityScheduleId", row.get("locationScheduleId"));
-        row.put("amenityScheduleTypeId", row.get("locationScheduleTypeId"));
+    details: (p: any, _: any, ctx: any) =>
+      loadDetails(p.salesFunnelId, p.sessionKey, ctx),
 
-        Map<String, Object> schedule = ScheduleTimezoneUtil.scheduleToLocal(row, timezone);
-        schedule.put("locationScheduleTypeId", schedule.remove("amenityScheduleTypeId"));
-        schedules.add(schedule);
-    }
-    response.put("schedules", schedules);
+    amenities: (p: any, _: any, ctx: any) =>
+      loadAmenities(p.salesFunnelId, p.sessionKey, ctx),
+  },
 
-    return List.of(response);
-}
-
-
+  // CHANGED: was "CustomerFunnelAmenity: { pricing: ... }"
+  CustomerFunnelAmenity: { __resolveType: amenityResolveType },
+  StandardFunnelAmenity: amenityFields,
+  RentalFunnelAmenity: amenityFields,
+  ParkingFunnelAmenity: amenityFields,
+};
