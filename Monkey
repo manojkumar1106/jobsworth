@@ -1,187 +1,280 @@
-export const customerSalesFunnelTypeDefs = `
-  type CustomerScheduleDate {
-    startDateTime: String
-    endDateTime: String
-  }
+package com.hlt.api.controller;
 
-  # NEW: type-specific fields only
-  type RentalConfiguration {
-    squareFootage: Float
-    maxCapacityStanding: Int
-    maxCapacitySitting: Int
-    maxCapacityRoundTable: Int
-    isGeneralAdmissionIncluded: Boolean
-  }
+import com.hlt.api.service.IParkingAmenityService;
+import io.swagger.v3.oas.annotations.Operation;
+import lombok.RequiredArgsConstructor;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
 
-  type ParkingConfiguration {
-    isOnsite: Boolean
+import java.util.List;
+import java.util.Map;
+// TODO: import ApiResponse and TicketRequest (same as your other controllers)
+
+@RestController
+@RequestMapping("/api/v1/parking-amenities")
+@RequiredArgsConstructor
+public class ParkingAmenityController {
+
+    private final IParkingAmenityService parkingAmenityService;
+
+    // usp_Upsert_Parking_Amenity
+    @Operation(summary = "Upsert Parking Amenity")
+    @PostMapping("/upsert")
+    public ApiResponse<Map<String, Object>> upsertParkingAmenity(@RequestBody TicketRequest req,
+                                                                 @AuthenticationPrincipal Jwt jwt) {
+        if (jwt != null) {
+            req.setSessionKey(jwt.getClaims().get("origin_jti").toString());
+        }
+        return ApiResponse.success("Parking amenity saved", parkingAmenityService.upsertParkingAmenity(req));
+    }
+
+    // usp_Get_Parking_Amenity_Details
+    @Operation(summary = "Get Parking Amenity Details")
+    @PostMapping("/details")
+    public ApiResponse<List<Map<String, Object>>> getParkingAmenityDetails(@RequestBody TicketRequest req,
+                                                                           @AuthenticationPrincipal Jwt jwt) {
+        if (jwt != null) {
+            req.setSessionKey(jwt.getClaims().get("origin_jti").toString());
+        }
+        return ApiResponse.success("Parking Amenity Details", parkingAmenityService.getParkingAmenityDetails(req));
+    }
+}
+
+
+
+package com.hlt.api.service;
+
+import java.util.List;
+import java.util.Map;
+// TODO: import TicketRequest
+
+public interface IParkingAmenityService {
+
+    Map<String, Object> upsertParkingAmenity(TicketRequest req);
+
+    List<Map<String, Object>> getParkingAmenityDetails(TicketRequest req);
+}
+
+
+
+package com.hlt.api.service.serviceimpl;
+
+import com.hlt.api.dao.ParkingAmenityDao;
+import com.hlt.api.service.IParkingAmenityService;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+// TODO: import TicketRequest
+
+@Slf4j
+@Service
+@RequiredArgsConstructor
+public class ParkingAmenityService implements IParkingAmenityService {
+
+    private final ParkingAmenityDao parkingAmenityDao;
+
+    @Override
+    @Transactional
+    public Map<String, Object> upsertParkingAmenity(TicketRequest req) {
+        log.info("Upserting parking amenity for amenityId: {}", req.getAmenityId());
+
+        // The proc returns the new Parking_Amenity_Id only on insert; on update it returns no rows.
+        List<Map<String, Object>> rows = parkingAmenityDao.upsertParkingAmenity(req);
+        Object parkingAmenityId = rows.isEmpty()
+                ? req.getParkingAmenityId()
+                : rows.get(0).values().iterator().next();
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("parkingAmenityId", parkingAmenityId);
+        return result;
+    }
+
+    @Override
+    public List<Map<String, Object>> getParkingAmenityDetails(TicketRequest req) {
+        log.info("Getting parking amenity details for amenityId: {}", req.getAmenityId());
+        // Empty list when parking is not configured yet (the proc does not return an error). No dates, read-only.
+        return parkingAmenityDao.getParkingAmenityDetails(req);
+    }
+}
+
+
+
+package com.hlt.api.dao;
+
+import org.springframework.stereotype.Repository;
+
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+// TODO: import TicketRequest
+
+@Repository
+public class ParkingAmenityDao extends BaseDao {
+
+    // client1.usp_Upsert_Parking_Amenity
+    // Returns one row (the new Parking_Amenity_Id) when inserting, no rows when updating.
+    // p_Result_Code (OUT): 1 ok, -2 session, -3 permission, -4 parameter
+    //   (null amenity / is onsite, amenity not in location function, unknown parking id, parking already configured)
+    // The proc already turns 0 into NULL for the ids, so null or 0 both work.
+    public List<Map<String, Object>> upsertParkingAmenity(TicketRequest req) {
+        Map<String, Object> params = new HashMap<>();
+        params.put("p_Session_Key", req.getSessionKey());
+        params.put("p_Location_Function_Id", req.getLocationFunctionId());
+        params.put("p_Amenity_Id", req.getAmenityId());
+        params.put("p_Parking_Amenity_Id", req.getParkingAmenityId());
+        params.put("p_Is_Onsite", req.getIsOnsite());
+        params.put("p_Parking_URL", req.getParkingUrl());
+        return executeList("usp_Upsert_Parking_Amenity", params);   // placeholder: use your BaseDao list method
+    }
+
+    // client1.usp_Get_Parking_Amenity_Details
+    // Result set: Parking_Amenity_Id, Is_Onsite, Parking_URL (no rows if not configured)
+    public List<Map<String, Object>> getParkingAmenityDetails(TicketRequest req) {
+        Map<String, Object> params = new HashMap<>();
+        params.put("p_Session_Key", req.getSessionKey());
+        params.put("p_Amenity_Id", req.getAmenityId());
+        return executeList("usp_Get_Parking_Amenity_Details", params);   // placeholder: use your BaseDao list method
+    }
+}
+
+
+
+
+// src/schema/parkingAmenity/typeDefs.ts
+// Add the inputs, and the query/mutation lines inside your existing `type Query { }` / `type Mutation { }`.
+// Keep `type: String!` only if your other inputs have it.
+export const parkingAmenityTypeDefs = `
+  input UpsertParkingAmenity {
+    type: String!
+    locationFunctionId: Int!
+    amenityId: Int!
+    parkingAmenityId: Int
+    isOnsite: Boolean!
     parkingUrl: String
   }
 
-  union AmenityConfiguration = RentalConfiguration | ParkingConfiguration
-
-  # CHANGED: one plain type again; the rental/parking fields moved into configuration
-  type CustomerFunnelAmenity {
-    funnelOrder: Int
+  input GetParkingAmenityDetails {
+    type: String!
     amenityId: Int!
-    amenityName: String
-    amenityDescription: String
-    amenityTypeId: Int
-    amenityTypeName: String
-    amenityTimezone: String
-    configuration: AmenityConfiguration
-    allScheduleDates: [CustomerScheduleDate]
-    pricing: [CustomerAmenityPriceType]
   }
-
-  type CustomerSalesFunnelDetails {
-    salesFunnelId: Int
-    urlSlug: String
-    isDateRequired: Boolean
-    salesCutoffLocalTime: String
-  }
-
-  type CustomerSalesFunnel {
-    salesFunnelId: Int!
-    salesFunnelName: String
-    urlSlug: String
-    isInquiryFunnel: Boolean
-    details: CustomerSalesFunnelDetails
-    amenities: [CustomerFunnelAmenity]
-  }
-
-  input GetAvailableAmenityDates {
-    sessionKey: String!
-    amenityId: Int!
-    timezone: String!
-  }
-
-  input GetCustomerSalesFunnelDetails { salesFunnelId: Int!, sessionKey: String! }
-  input GetCustomerSalesFunnelAmenities { salesFunnelId: Int!, sessionKey: String! }
-  input GetCustomerSalesFunnel { sessionKey: String! }
 
   type Query {
-    getCustomerSalesFunnel(request: GetCustomerSalesFunnel!): [CustomerSalesFunnel]
-    getCustomerSalesFunnelById(request: GetCustomerSalesFunnelDetails!): CustomerSalesFunnel
-    getCustomerSalesFunnelDetails(request: GetCustomerSalesFunnelDetails!): CustomerSalesFunnelDetails
-    getCustomerSalesFunnelAmenities(request: GetCustomerSalesFunnelAmenities!): [CustomerFunnelAmenity]
-    getAvailableAmenityDates(request: GetAvailableAmenityDates!): SessionResponse
+    getParkingAmenityDetails(request: GetParkingAmenityDetails!): SessionResponse
+  }
+
+  type Mutation {
+    upsertParkingAmenity(request: UpsertParkingAmenity!): SessionResponse
   }
 `;
 
 
 
 
-import { getCustomerAmenityPricing } from "../../../service/customer/pricetypes/priceTypeService";
-// UNCHANGED: keep your existing line 3 import exactly as it is
-// (getAvailableAmenityDates, getCustomerSalesFunnel, getCustomerSalesFunnelAmenities, getCustomerSalesFunnelDetails)
+// src/schema/parkingAmenity/resolvers.ts
+import {
+  upsertParkingAmenity,
+  getParkingAmenityDetails,
+} from "../../service/parkingAmenity/parkingAmenityService";
 
-const unwrap = (res: any) => {
-  const d = res?.data;
-  return typeof d === "string" ? JSON.parse(d) : d ?? null;
-};
-
-// stamps the session key on each returned row so nested resolvers can use it
-const withKey = (rows: any[], sessionKey: string) =>
-  (rows ?? []).map((r) => ({ ...r, sessionKey }));
-
-const loadFunnels = async (sessionKey: string, ctx: any) =>
-  withKey(unwrap(await getCustomerSalesFunnel({ sessionKey }, ctx)) ?? [], sessionKey);
-
-const loadDetails = async (salesFunnelId: number, sessionKey: string, ctx: any) =>
-  unwrap(await getCustomerSalesFunnelDetails({ salesFunnelId, sessionKey }, ctx));
-
-const loadAmenities = async (salesFunnelId: number, sessionKey: string, ctx: any) =>
-  withKey(
-    unwrap(await getCustomerSalesFunnelAmenities({ salesFunnelId, sessionKey }, ctx)) ?? [],
-    sessionKey
-  );
-
-const loadPricing = async (amenityId: number, sessionKey: string, ctx: any) =>
-  unwrap(await getCustomerAmenityPricing({ amenityId, sessionKey }, ctx)) ?? [];
-
-const findFunnel = async (p: any, ctx: any) => {
-  p._funnel ??= loadFunnels(p.sessionKey, ctx).then(
-    (list: any[]) => list.find((f) => f.salesFunnelId === p.salesFunnelId) ?? null
-  );
-  return p._funnel;
-};
-
-// NEW: amenity type ids (Shared.Amenity_Type)
-const RENTAL_TYPE_ID = 4;
-const PARKING_TYPE_ID = 5;
-
-// NEW: builds only the fields that belong to the amenity's type; null for 1, 2, 3
-const buildConfiguration = (a: any) => {
-  const typeId = Number(a.amenityTypeId);
-  if (typeId === RENTAL_TYPE_ID)
-    return {
-      __typename: "RentalConfiguration",
-      squareFootage: a.squareFootage,
-      maxCapacityStanding: a.maxCapacityStanding,
-      maxCapacitySitting: a.maxCapacitySitting,
-      maxCapacityRoundTable: a.maxCapacityRoundTable,
-      isGeneralAdmissionIncluded: a.isGeneralAdmissionIncluded,
-    };
-  if (typeId === PARKING_TYPE_ID)
-    return {
-      __typename: "ParkingConfiguration",
-      isOnsite: a.isOnsite,
-      parkingUrl: a.parkingUrl,
-    };
-  return null;
-};
-
-export const customerSalesFunnelResolvers = {
+export const parkingAmenityResolvers = {
   Query: {
-    getCustomerSalesFunnel: (_: any, { request }: any, ctx: any) =>
-      loadFunnels(request.sessionKey, ctx),
-
-    // returns only id + key; other fields resolve lazily below
-    getCustomerSalesFunnelById: (_: any, { request }: any) => ({
-      salesFunnelId: request.salesFunnelId,
-      sessionKey: request.sessionKey,
-    }),
-
-    getCustomerSalesFunnelDetails: (_: any, { request }: any, ctx: any) =>
-      loadDetails(request.salesFunnelId, request.sessionKey, ctx),
-
-    getCustomerSalesFunnelAmenities: (_: any, { request }: any, ctx: any) =>
-      loadAmenities(request.salesFunnelId, request.sessionKey, ctx),
-
-    getAvailableAmenityDates: async (_: any, { request }: any, ctx: any) => {
-      ctx.logger.info("Get Available Amenity Dates", { request });
-      return await getAvailableAmenityDates(request, ctx);
+    getParkingAmenityDetails: async (_: any, { request }: any, ctx: any) => {
+      ctx.logger.info("Get Parking Amenity Details", { amenityId: request?.amenityId });
+      return await getParkingAmenityDetails(request, ctx);
     },
   },
-
-  CustomerSalesFunnel: {
-    salesFunnelName: async (p: any, _: any, ctx: any) =>
-      p.salesFunnelName !== undefined
-        ? p.salesFunnelName
-        : (await findFunnel(p, ctx))?.salesFunnelName ?? null,
-
-    urlSlug: async (p: any, _: any, ctx: any) =>
-      p.urlSlug !== undefined
-        ? p.urlSlug
-        : (await findFunnel(p, ctx))?.urlSlug ?? null,
-
-    details: (p: any, _: any, ctx: any) =>
-      loadDetails(p.salesFunnelId, p.sessionKey, ctx),
-
-    amenities: (p: any, _: any, ctx: any) =>
-      loadAmenities(p.salesFunnelId, p.sessionKey, ctx),
-  },
-
-  // CHANGED: pricing stays here, and configuration is added
-  CustomerFunnelAmenity: {
-    pricing: (p: any, _: any, ctx: any) =>
-      loadPricing(p.amenityId, p.sessionKey, ctx),
-    configuration: (p: any) => buildConfiguration(p),
-  },
-
-  // NEW: tells GraphQL which union member the object is
-  AmenityConfiguration: {
-    __resolveType: (o: any) => o.__typename,
+  Mutation: {
+    upsertParkingAmenity: async (_: any, { request }: any, ctx: any) => {
+      ctx.logger.info("Upsert Parking Amenity", { amenityId: request?.amenityId });
+      return await upsertParkingAmenity(request, ctx);
+    },
   },
 };
+
+
+
+
+// src/schema/parkingAmenity/validators/parkingAmenityValidator.ts
+import { FieldRule } from "../../../utils/commonValidator";
+
+const requiredInteger: FieldRule = { type: "integer", required: true };
+const requiredString: FieldRule = { type: "string", required: true };
+
+// UpsertParkingAmenity input
+export const upsertParkingAmenityRules: Record<string, FieldRule> = {
+  type: requiredString,                                   // remove if you did not add `type` to the input
+  locationFunctionId: requiredInteger,
+  amenityId: requiredInteger,
+  parkingAmenityId: { type: "integer", required: false }, // null = create, value = update
+  isOnsite: { type: "boolean", required: true },
+  parkingUrl: { type: "string", required: false },        // make required if the business decides it must be mandatory
+};
+
+// GetParkingAmenityDetails input
+export const getParkingAmenityDetailsRules: Record<string, FieldRule> = {
+  type: requiredString,                                   // remove if you did not add `type` to the input
+  amenityId: requiredInteger,
+};
+
+
+
+
+// src/service/parkingAmenity/parkingAmenityService.ts
+import { GraphQLError } from "graphql";
+import { FieldRule, validateRequest } from "../../utils/commonValidator";
+import { httpClient } from "../../utils/http/httpClient";
+import {
+  upsertParkingAmenityRules,
+  getParkingAmenityDetailsRules,
+} from "../../schema/parkingAmenity/validators/parkingAmenityValidator";
+
+async function callParkingAmenityData(
+  method: string,
+  endpoint: string,
+  request: any,
+  context: any,
+  validationRules?: Record<string, FieldRule>
+) {
+  if (validationRules) {
+    const errors = validateRequest(request, validationRules);
+
+    if (errors.length > 0) {
+      throw new GraphQLError(`Validation Failed: ${errors.join(", ")}`, {
+        extensions: {
+          code: "BAD_USER_INPUT",
+          errors,
+        },
+      });
+    }
+  }
+
+  const baseUrl = process.env.SPRINGBOOT_BASE_ENDPOINT;
+  const url = `${baseUrl}/api/v1/parking-amenities${endpoint}`;
+  return await httpClient(
+    url,
+    {
+      method: method,
+      body: method === "GET" ? undefined : request,
+    },
+    context.logger,
+    context
+  );
+}
+
+export async function upsertParkingAmenity(request: any, context: any) {
+  return await callParkingAmenityData("POST", "/upsert", request, context, upsertParkingAmenityRules);
+}
+
+export async function getParkingAmenityDetails(request: any, context: any) {
+  return await callParkingAmenityData("POST", "/details", request, context, getParkingAmenityDetailsRules);
+}
+
