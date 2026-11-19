@@ -1,280 +1,64 @@
-package com.hlt.api.controller;
-
-import com.hlt.api.service.IParkingAmenityService;
-import io.swagger.v3.oas.annotations.Operation;
-import lombok.RequiredArgsConstructor;
-import org.springframework.security.core.annotation.AuthenticationPrincipal;
-import org.springframework.security.oauth2.jwt.Jwt;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
-
-import java.util.List;
-import java.util.Map;
-// TODO: import ApiResponse and TicketRequest (same as your other controllers)
-
-@RestController
-@RequestMapping("/api/v1/parking-amenities")
-@RequiredArgsConstructor
-public class ParkingAmenityController {
-
-    private final IParkingAmenityService parkingAmenityService;
-
-    // usp_Upsert_Parking_Amenity
-    @Operation(summary = "Upsert Parking Amenity")
-    @PostMapping("/upsert")
-    public ApiResponse<Map<String, Object>> upsertParkingAmenity(@RequestBody TicketRequest req,
-                                                                 @AuthenticationPrincipal Jwt jwt) {
-        if (jwt != null) {
-            req.setSessionKey(jwt.getClaims().get("origin_jti").toString());
-        }
-        return ApiResponse.success("Parking amenity saved", parkingAmenityService.upsertParkingAmenity(req));
+@Operation(summary = "Get Location Operation Hours")
+@GetMapping("/operation-hours")
+public ApiResponse<List<Map<String, Object>>> getLocationOperationHours(@AuthenticationPrincipal Jwt jwt) {
+    TicketRequest req = new TicketRequest();
+    if (jwt != null) {
+        req.setSessionKey(jwt.getClaims().get("origin_jti").toString());
     }
-
-    // usp_Get_Parking_Amenity_Details
-    @Operation(summary = "Get Parking Amenity Details")
-    @PostMapping("/details")
-    public ApiResponse<List<Map<String, Object>>> getParkingAmenityDetails(@RequestBody TicketRequest req,
-                                                                           @AuthenticationPrincipal Jwt jwt) {
-        if (jwt != null) {
-            req.setSessionKey(jwt.getClaims().get("origin_jti").toString());
-        }
-        return ApiResponse.success("Parking Amenity Details", parkingAmenityService.getParkingAmenityDetails(req));
-    }
+    return ApiResponse.success("Location Operation Hours", locationScheduleService.getLocationOperationHours(req));
 }
 
 
 
-package com.hlt.api.service;
+List<Map<String, Object>> getLocationOperationHours(TicketRequest req);
 
-import java.util.List;
-import java.util.Map;
-// TODO: import TicketRequest
 
-public interface IParkingAmenityService {
-
-    Map<String, Object> upsertParkingAmenity(TicketRequest req);
-
-    List<Map<String, Object>> getParkingAmenityDetails(TicketRequest req);
+// client1.usp_Get_Location_Operation_Hours -> 2 result sets (Timezone, then the open windows)
+public List<List<Map<String, Object>>> getLocationOperationHours(TicketRequest req) {
+    Map<String, Object> params = new HashMap<>();
+    params.put("p_Session_Key", req.getSessionKey());
+    return executeMultiResultSets("usp_Get_Location_Operation_Hours", params);   // same call as getLocationSchedule
 }
 
 
 
-package com.hlt.api.service.serviceimpl;
+@Override
+public List<Map<String, Object>> getLocationOperationHours(TicketRequest req) {
+    List<List<Map<String, Object>>> resultSets = locationScheduleDao.getLocationOperationHours(req);
+    List<Map<String, Object>> header = resultSets.get(0);
+    List<Map<String, Object>> rows = resultSets.get(1);
 
-import com.hlt.api.dao.ParkingAmenityDao;
-import com.hlt.api.service.IParkingAmenityService;
-import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
-
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-// TODO: import TicketRequest
-
-@Slf4j
-@Service
-@RequiredArgsConstructor
-public class ParkingAmenityService implements IParkingAmenityService {
-
-    private final ParkingAmenityDao parkingAmenityDao;
-
-    @Override
-    @Transactional
-    public Map<String, Object> upsertParkingAmenity(TicketRequest req) {
-        log.info("Upserting parking amenity for amenityId: {}", req.getAmenityId());
-
-        // The proc returns the new Parking_Amenity_Id only on insert; on update it returns no rows.
-        List<Map<String, Object>> rows = parkingAmenityDao.upsertParkingAmenity(req);
-        Object parkingAmenityId = rows.isEmpty()
-                ? req.getParkingAmenityId()
-                : rows.get(0).values().iterator().next();
-
-        Map<String, Object> result = new LinkedHashMap<>();
-        result.put("parkingAmenityId", parkingAmenityId);
-        return result;
+    if (header.isEmpty() || rows.isEmpty()) {
+        return List.of();   // no operating hours configured
     }
 
-    @Override
-    public List<Map<String, Object>> getParkingAmenityDetails(TicketRequest req) {
-        log.info("Getting parking amenity details for amenityId: {}", req.getAmenityId());
-        // Empty list when parking is not configured yet (the proc does not return an error). No dates, read-only.
-        return parkingAmenityDao.getParkingAmenityDetails(req);
+    String timezone = (String) header.get(0).get("timezone");
+    TimezoneConverter.validateTimezone(timezone);
+
+    for (Map<String, Object> row : rows) {
+        row.put("startAt", TimezoneConverter.toLocal((LocalDateTime) row.get("startAt"), timezone));
+        row.put("endAt", TimezoneConverter.toLocal((LocalDateTime) row.get("endAt"), timezone));
+        row.put("timezone", timezone);
     }
-}
-
-
-
-package com.hlt.api.dao;
-
-import org.springframework.stereotype.Repository;
-
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-// TODO: import TicketRequest
-
-@Repository
-public class ParkingAmenityDao extends BaseDao {
-
-    // client1.usp_Upsert_Parking_Amenity
-    // Returns one row (the new Parking_Amenity_Id) when inserting, no rows when updating.
-    // p_Result_Code (OUT): 1 ok, -2 session, -3 permission, -4 parameter
-    //   (null amenity / is onsite, amenity not in location function, unknown parking id, parking already configured)
-    // The proc already turns 0 into NULL for the ids, so null or 0 both work.
-    public List<Map<String, Object>> upsertParkingAmenity(TicketRequest req) {
-        Map<String, Object> params = new HashMap<>();
-        params.put("p_Session_Key", req.getSessionKey());
-        params.put("p_Location_Function_Id", req.getLocationFunctionId());
-        params.put("p_Amenity_Id", req.getAmenityId());
-        params.put("p_Parking_Amenity_Id", req.getParkingAmenityId());
-        params.put("p_Is_Onsite", req.getIsOnsite());
-        params.put("p_Parking_URL", req.getParkingUrl());
-        return executeList("usp_Upsert_Parking_Amenity", params);   // placeholder: use your BaseDao list method
-    }
-
-    // client1.usp_Get_Parking_Amenity_Details
-    // Result set: Parking_Amenity_Id, Is_Onsite, Parking_URL (no rows if not configured)
-    public List<Map<String, Object>> getParkingAmenityDetails(TicketRequest req) {
-        Map<String, Object> params = new HashMap<>();
-        params.put("p_Session_Key", req.getSessionKey());
-        params.put("p_Amenity_Id", req.getAmenityId());
-        return executeList("usp_Get_Parking_Amenity_Details", params);   // placeholder: use your BaseDao list method
-    }
+    return rows;   // read-only, no @Transactional
 }
 
 
 
 
-// src/schema/parkingAmenity/typeDefs.ts
-// Add the inputs, and the query/mutation lines inside your existing `type Query { }` / `type Mutation { }`.
-// Keep `type: String!` only if your other inputs have it.
-export const parkingAmenityTypeDefs = `
-  input UpsertParkingAmenity {
-    type: String!
-    locationFunctionId: Int!
-    amenityId: Int!
-    parkingAmenityId: Int
-    isOnsite: Boolean!
-    parkingUrl: String
-  }
-
-  input GetParkingAmenityDetails {
-    type: String!
-    amenityId: Int!
-  }
-
-  type Query {
-    getParkingAmenityDetails(request: GetParkingAmenityDetails!): SessionResponse
-  }
-
-  type Mutation {
-    upsertParkingAmenity(request: UpsertParkingAmenity!): SessionResponse
-  }
-`;
-
-
-
-
-// src/schema/parkingAmenity/resolvers.ts
-import {
-  upsertParkingAmenity,
-  getParkingAmenityDetails,
-} from "../../service/parkingAmenity/parkingAmenityService";
-
-export const parkingAmenityResolvers = {
-  Query: {
-    getParkingAmenityDetails: async (_: any, { request }: any, ctx: any) => {
-      ctx.logger.info("Get Parking Amenity Details", { amenityId: request?.amenityId });
-      return await getParkingAmenityDetails(request, ctx);
-    },
-  },
-  Mutation: {
-    upsertParkingAmenity: async (_: any, { request }: any, ctx: any) => {
-      ctx.logger.info("Upsert Parking Amenity", { amenityId: request?.amenityId });
-      return await upsertParkingAmenity(request, ctx);
-    },
-  },
-};
-
-
-
-
-// src/schema/parkingAmenity/validators/parkingAmenityValidator.ts
-import { FieldRule } from "../../../utils/commonValidator";
-
-const requiredInteger: FieldRule = { type: "integer", required: true };
-const requiredString: FieldRule = { type: "string", required: true };
-
-// UpsertParkingAmenity input
-export const upsertParkingAmenityRules: Record<string, FieldRule> = {
-  type: requiredString,                                   // remove if you did not add `type` to the input
-  locationFunctionId: requiredInteger,
-  amenityId: requiredInteger,
-  parkingAmenityId: { type: "integer", required: false }, // null = create, value = update
-  isOnsite: { type: "boolean", required: true },
-  parkingUrl: { type: "string", required: false },        // make required if the business decides it must be mandatory
-};
-
-// GetParkingAmenityDetails input
-export const getParkingAmenityDetailsRules: Record<string, FieldRule> = {
-  type: requiredString,                                   // remove if you did not add `type` to the input
-  amenityId: requiredInteger,
-};
-
-
-
-
-// src/service/parkingAmenity/parkingAmenityService.ts
-import { GraphQLError } from "graphql";
-import { FieldRule, validateRequest } from "../../utils/commonValidator";
-import { httpClient } from "../../utils/http/httpClient";
-import {
-  upsertParkingAmenityRules,
-  getParkingAmenityDetailsRules,
-} from "../../schema/parkingAmenity/validators/parkingAmenityValidator";
-
-async function callParkingAmenityData(
-  method: string,
-  endpoint: string,
-  request: any,
-  context: any,
-  validationRules?: Record<string, FieldRule>
-) {
-  if (validationRules) {
-    const errors = validateRequest(request, validationRules);
-
-    if (errors.length > 0) {
-      throw new GraphQLError(`Validation Failed: ${errors.join(", ")}`, {
-        extensions: {
-          code: "BAD_USER_INPUT",
-          errors,
-        },
-      });
-    }
-  }
-
-  const baseUrl = process.env.SPRINGBOOT_BASE_ENDPOINT;
-  const url = `${baseUrl}/api/v1/parking-amenities${endpoint}`;
-  return await httpClient(
-    url,
-    {
-      method: method,
-      body: method === "GET" ? undefined : request,
-    },
-    context.logger,
-    context
-  );
+type Query {
+  getLocationOperationHours: SessionResponse
 }
 
-export async function upsertParkingAmenity(request: any, context: any) {
-  return await callParkingAmenityData("POST", "/upsert", request, context, upsertParkingAmenityRules);
+
+
+export async function getLocationOperationHours(context: any) {
+  return await callLocationScheduleData("GET", "/operation-hours", undefined, context);
 }
 
-export async function getParkingAmenityDetails(request: any, context: any) {
-  return await callParkingAmenityData("POST", "/details", request, context, getParkingAmenityDetailsRules);
-}
 
+
+getLocationOperationHours: async (_: any, __: any, ctx: any) => {
+  ctx.logger.info("Get Location Operation Hours");
+  return await getLocationOperationHours(ctx);
+},
