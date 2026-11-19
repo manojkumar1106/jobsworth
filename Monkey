@@ -1,64 +1,70 @@
-@Operation(summary = "Get Location Operation Hours")
-@GetMapping("/operation-hours")
-public ApiResponse<List<Map<String, Object>>> getLocationOperationHours(@AuthenticationPrincipal Jwt jwt) {
-    TicketRequest req = new TicketRequest();
+@Operation(summary = "Get Rental Amenities")
+@PostMapping("/list")
+public ApiResponse<List<Map<String, Object>>> getRentalAmenities(@RequestBody TicketRequest req,
+                                                                 @AuthenticationPrincipal Jwt jwt) {
     if (jwt != null) {
         req.setSessionKey(jwt.getClaims().get("origin_jti").toString());
     }
-    return ApiResponse.success("Location Operation Hours", locationScheduleService.getLocationOperationHours(req));
+    return ApiResponse.success("Rental Amenities", rentalAmenityService.getRentalAmenities(req));
 }
 
 
+List<Map<String, Object>> getRentalAmenities(TicketRequest req);
 
-List<Map<String, Object>> getLocationOperationHours(TicketRequest req);
-
-
-// client1.usp_Get_Location_Operation_Hours -> 2 result sets (Timezone, then the open windows)
-public List<List<Map<String, Object>>> getLocationOperationHours(TicketRequest req) {
-    Map<String, Object> params = new HashMap<>();
-    params.put("p_Session_Key", req.getSessionKey());
-    return executeMultiResultSets("usp_Get_Location_Operation_Hours", params);   // same call as getLocationSchedule
-}
 
 
 
 @Override
-public List<Map<String, Object>> getLocationOperationHours(TicketRequest req) {
-    List<List<Map<String, Object>>> resultSets = locationScheduleDao.getLocationOperationHours(req);
-    List<Map<String, Object>> header = resultSets.get(0);
-    List<Map<String, Object>> rows = resultSets.get(1);
-
-    if (header.isEmpty() || rows.isEmpty()) {
-        return List.of();   // no operating hours configured
-    }
-
-    String timezone = (String) header.get(0).get("timezone");
-    TimezoneConverter.validateTimezone(timezone);
-
-    for (Map<String, Object> row : rows) {
-        row.put("startAt", TimezoneConverter.toLocal((LocalDateTime) row.get("startAt"), timezone));
-        row.put("endAt", TimezoneConverter.toLocal((LocalDateTime) row.get("endAt"), timezone));
-        row.put("timezone", timezone);
-    }
-    return rows;   // read-only, no @Transactional
+public List<Map<String, Object>> getRentalAmenities(TicketRequest req) {
+    log.info("Getting rental amenities for locationFunctionId: {}", req.getLocationFunctionId());
+    return rentalAmenityDao.getRentalAmenities(req);   // read-only, so no @Transactional
 }
 
 
 
+
+// client1.usp_Get_Rental_Amenities
+public List<Map<String, Object>> getRentalAmenities(TicketRequest req) {
+    Map<String, Object> params = new HashMap<>();
+    params.put("p_Session_Key", req.getSessionKey());
+    params.put("p_Location_Function_Id", req.getLocationFunctionId());
+    return executeList("usp_Get_Rental_Amenities", params);   // same list method used by getRentalAmenityDetails
+}
+
+
+input GetRentalAmenities {
+  locationFunctionId: Int!
+}
 
 type Query {
-  getLocationOperationHours: SessionResponse
+  getRentalAmenities(request: GetRentalAmenities!): SessionResponse
 }
 
 
 
-export async function getLocationOperationHours(context: any) {
-  return await callLocationScheduleData("GET", "/operation-hours", undefined, context);
+export const getRentalAmenitiesRules: Record<string, FieldRule> = {
+  locationFunctionId: { type: "integer", required: true },
+};
+
+
+
+
+import { getRentalAmenitiesRules } from "../../schema/rentalAmenity/validators/rentalAmenityValidator"; // adjust to your path
+
+export async function getRentalAmenities(request: any, context: any) {
+  return await callRentalAmenityData(
+    "POST",
+    "/list",              // must match @PostMapping("/list")
+    request,
+    context,
+    getRentalAmenitiesRules
+  );
 }
 
 
-
-getLocationOperationHours: async (_: any, __: any, ctx: any) => {
-  ctx.logger.info("Get Location Operation Hours");
-  return await getLocationOperationHours(ctx);
+getRentalAmenities: async (_: any, { request }: any, ctx: any) => {
+  ctx.logger.info("Get Rental Amenities", { locationFunctionId: request?.locationFunctionId });
+  return await getRentalAmenities(request, ctx);
 },
+
+
