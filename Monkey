@@ -1,125 +1,19 @@
-# Pricing Rules vs. Promotion Rules
-
-*Last updated: 2026-11-20. Items marked "To confirm" need a team decision.*
-
----
-
-## In one sentence
-
-**Pricing rules decide what the product costs. Promotion rules reduce that price afterward.**
-
----
-
-## 1. What is a pricing rule?
-
-A pricing rule sets the **price of a ticket** based on conditions such as the purchase date or how close it is to the event. It is configured in the **Pricing Tables** screen, per category and ticket type.
-
-**Example (Theater Concert, Admission category)**
-
-| Ticket type | Base price | Early bird | Standard | Same day |
-|---|---|---|---|---|
-| Standard | $59 | $39 | $59 | about $65 |
-| Premium | $69 | $49 | $69 | about $74 |
-| Value | $34 | $29 | $34 | about $39 |
-
-*Figures read from a design mockup photo; some were blurry, so treat them as approximate.*
-
-**Dynamic pricing conditions** follow this pattern:
-"If [variable] is [condition] than [selected date], then select [tier]."
-*Example: if the purchase is more than 30 days before the event, select the Early bird tier.*
-
-**Result:** exactly one price tier is selected for each ticket type.
-
----
-
-## 2. What is a promotion rule?
-
-A promotion rule is a **marketing offer** that lowers a price that has already been set. It is configured in **Promotions & Discounts**.
-
-- Comes as a **Promo Code** (customer types it) or **Automatic** (applies by itself).
-- Has a discount type (flat or percentage) and an amount.
-- Has controls: dates, usage limits, user type (All, Members, Non-Members), channel (Web, POS), stackable, stack group, priority.
-- Scope: **whole cart** or **one amenity**.
-
-**Example:** code `XMAS5` gives 10% off, Web only, Dec 22 to Dec 30.
-
----
-
-## 3. Side by side
-
-| | Pricing rule | Promotion rule |
-|---|---|---|
-| **Question it answers** | What is the price right now? | Does this customer get money off? |
-| **Purpose** | Standard pricing (early-bird, same-day) | Marketing campaigns and member perks |
-| **Trigger** | Conditions such as date or days before the event | A code, or automatic when the cart qualifies |
-| **Result** | One price tier selected | A reduction subtracted |
-| **Configured in** | Pricing Tables | Promotions & Discounts |
-| **Scope** | Category and ticket type | Whole cart or one amenity |
-| **Limits** | None | Usage limits, per-customer limits, dates |
-| **Who it applies to** | Everyone, unless tiers are split by audience | All Users, Members or Non-Members |
-| **Combining** | One tier per ticket type | Stackable, stack groups, priority decide |
-| **Customer sees** | The ticket price | A discount line in the cart, or a strike-through |
-| **Typical owner** | Revenue / pricing manager | Marketing |
-
----
-
-## 4. Order of application
-
-1. **Pricing rule** selects the tier, which gives the list price.
-2. **Discount or promotion** is applied to that price.
-3. The cart shows the final total.
-
-**Worked example (illustrative)**
-- Standard ticket bought early: Early bird tier = **$39**.
-- Promo code XMAS5 (10% off): $39 − $3.90 = **$35.10**.
-
-**To confirm:** does a promotion calculate from the selected tier price ($39) or from the base price ($59)?
-
----
-
-## 5. How to decide which one to use
-
-| The business wants... | Use |
-|---|---|
-| "Tickets cost less when bought early" | Pricing rule |
-| "Same-day tickets cost more" | Pricing rule |
-| "Weekday price $25, weekend price $50" | Pricing rule (to confirm, see section 6) |
-| "10% off the whole order this weekend" | Automatic promotion |
-| "Email subscribers get a code for $5 off" | Promo code promotion |
-| "Members save 15%" | Members-only promotion, or a member pricing tier (to confirm) |
-| "Group pricing for 10 or more tickets" | Discount with a minimum quantity |
-
-**Rule of thumb:** if it is part of the normal price list, it is a **pricing rule**. If it is a campaign with a start, end, code or audience, it is a **promotion**.
-
----
-
-## 6. Decisions to confirm with the team
-
-1. **Weekday vs. weekend pricing:** this behaves like a pricing tier (a date condition). The Create Discount form had no day-of-week field, so decide whether it belongs in Pricing Tables or in Discounts.
-2. **Promotion base:** do promotions reduce the selected tier price or the base price?
-3. **Member pricing:** use a member pricing tier, a Members-only promotion, or both? Using both could discount members twice.
-4. **Engine:** do pricing rules run in the same rule engine as promotions? We have not reviewed how pricing rules are stored or evaluated.
-5. **Overlap:** if a Same-day tier raises the price and an automatic promotion lowers it, which should the customer see first?
-
----
-
-## 7. Standard wording
-
-Use these phrases in tickets and meetings.
-
-- "Pricing rule" = sets the ticket price. Avoid: "price discount", "special price".
-- "Tier" = a price level inside a pricing table (Early bird, Standard, Same day).
-- "Base price" = the starting price before any tier.
-- "Promotion" = a campaign that reduces the price. Avoid: "pricing promo".
-- "Discount" = an always-on reduction on one product (see the Promotions & Discounts guide).
-
----
-
-## 8. Quick answer for support
-
-| Customer says | Check |
-|---|---|
-| "Why is the ticket $65 today but $39 last week?" | Pricing rule tier (Early bird vs. Same day) |
-| "My code didn't change the price" | Promotion: published, dates, channel, user type, usage limit |
-| "The cart shows a lower price than the page" | A promotion or discount applied on top of the tier price |
-| "Members and guests see different prices" | Member tier or Members-only promotion |
+Approved term	Definition	Avoid saying
+Offer	Umbrella word for anything that lowers a price (a Promotion or a Discount).	"Deal", "coupon", "special"
+Discount	An always-on price reduction on one product (amenity). No code. Example: $50 → $25 on weekdays.	"System discount" in customer-facing text
+Promotion	A campaign-based offer with dates, limits and rules. Created on the Create Promotion screen. Comes as Promo Code or Automatic.	"Promo" alone when the type matters
+Promo Code promotion	Customer must enter a code at checkout.	"Coupon code"
+Automatic promotion	Applies by itself when the cart qualifies. No code.	"Auto discount", "no-code promo"
+Promo code	The text the customer enters. Unique, letters/numbers only.	"Coupon", "voucher"
+Display message	The text the customer sees describing the offer.	"Description", "title"
+Applies to Full Cart	Toggle. ON = whole order is discounted. OFF = only the selected amenity.	"Cart level / product level" (use "Full cart" and "Amenity")
+Amenity	The product or attraction the offer targets when Full Cart is OFF.	"Item", "SKU"
+Priority	1 (highest) to 5 (lowest). Decides which offer is evaluated first and wins when offers compete.	"Rank", "weight"
+Stackable	Whether the offer may combine with other offers.	"Combinable"
+Stack group	A label that puts offers in competition. Within one group only one applies.	"Bucket", "category"
+User type	Who qualifies: All Users, Members, Non-Members.	"Customer type"
+Channel	Where the offer works: Web, POS or both.	"Platform", "source"
+Draft	Saved, not live.	"Saved"
+Published	Live. The rule is active in the engine.	"Active" (reserve "active" for the rule record)
+Inactive	Turned off. The rule is deactivated.	"Deleted", "removed"
+Rule (Drools rule)	The generated engine record that applies a published offer. Versioned.	"Script"
