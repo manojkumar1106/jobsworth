@@ -1,84 +1,19 @@
-getLocationParkingDetails: async (_: any, { request }: any, ctx: any) => {
-  ctx.logger.info("Get Location Parking Details", { timezone: request?.timezone }); // never log sessionKey
-  return await getLocationParkingDetails(request, ctx);
-},
+@Override
+public List<Map<String, Object>> getRentalAmenities(TicketRequest req) {
+    List<Map<String, Object>> flatRows = rentalAmenityDao.getRentalAmenities(req);
 
-import { getLocationParkingDetailsRules } from "../../schema/customerParkingAmenity/validators/customerParkingAmenityValidator"; // adjust
+    Map<Object, List<Map<String, Object>>> rowsByLocation = flatRows.stream()
+            .collect(Collectors.groupingBy(r -> r.get("locationId"), LinkedHashMap::new, Collectors.toList()));
 
-export async function getLocationParkingDetails(request: any, context: any) {
-  return await callCustomerParkingAmenityData(      // same helper style as your other customer services
-    "POST",
-    "/details",                                     // base /api/v1/customer/parking-amenities
-    request,
-    context,
-    getLocationParkingDetailsRules
-  );
+    List<Map<String, Object>> response = new ArrayList<>();
+    rowsByLocation.forEach((locationId, rows) -> {
+        Map<String, Object> group = new LinkedHashMap<>();
+        group.put("locationId", locationId);
+        group.put("locationName", rows.get(0).get("locationName"));
+        group.put("amenities", rows.stream()
+                .map(r -> Map.of("amenityId", r.get("amenityId"), "amenityName", r.get("amenityName")))
+                .toList());
+        response.add(group);
+    });
+    return response;
 }
-
-
-import { FieldRule } from "../../utils/commonValidator"; // adjust path
-
-export const getLocationParkingDetailsRules: Record<string, FieldRule> = {
-  sessionKey: { type: "string", required: true },
-  timezone:   { type: "string", required: true },
-};
-
-
-input GetLocationParkingDetails {
-  sessionKey: String!
-  timezone: String!
-}
-
-type Query {
-  getLocationParkingDetails(request: GetLocationParkingDetails!): SessionResponse
-}
-
-
-
-@Slf4j
-@Service
-@RequiredArgsConstructor
-public class CustomerParkingAmenityService implements ICustomerParkingAmenityService {
-
-    private final CustomerParkingAmenityDao customerParkingAmenityDao;
-
-    @Override
-    public List<Map<String, Object>> getLocationParkingDetails(TicketRequest req) {
-        String tz = req.getTimezone();
-        TimezoneConverter.validateTimezone(tz);
-
-        List<List<Map<String, Object>>> resultSets = customerParkingAmenityDao.getLocationParkingDetails(req);
-        List<Map<String, Object>> parkingRows  = resultSets.get(0);
-        List<Map<String, Object>> scheduleRows = resultSets.get(1);
-        List<Map<String, Object>> priceRows    = resultSets.get(2);
-
-        // schedules: group by amenityId, UTC -> local
-        Map<Object, List<Map<String, Object>>> schedulesByAmenity = new HashMap<>();
-        for (Map<String, Object> row : scheduleRows) {
-            if (row.get("amenityScheduleId") == null) continue;          // amenity without schedule
-            Map<String, Object> schedule = ScheduleTimezoneUtil.scheduleToLocal(row, tz);
-            if (row.get("allScheduleDates") != null) {
-                schedule.put("allScheduleDates", ScheduleTimezoneUtil.datesToLocal(row.get("allScheduleDates"), tz));
-            }
-            schedulesByAmenity.computeIfAbsent(row.get("amenityId"), k -> new ArrayList<>()).add(schedule);
-        }
-
-        // price types: group by amenityId (no dates, no conversion)
-        Map<Object, List<Map<String, Object>>> pricesByAmenity = new HashMap<>();
-        for (Map<String, Object> row : priceRows) {
-            if (row.get("amenityPriceTypeId") == null) continue;         // amenity without price type
-            pricesByAmenity.computeIfAbsent(row.get("amenityId"), k -> new ArrayList<>()).add(row);
-        }
-
-        // one object per parking amenity
-        List<Map<String, Object>> response = new ArrayList<>();
-        for (Map<String, Object> parking : parkingRows) {
-            Map<String, Object> item = new LinkedHashMap<>(parking);
-            item.put("schedules",  schedulesByAmenity.getOrDefault(parking.get("amenityId"), new ArrayList<>()));
-            item.put("priceTypes", pricesByAmenity.getOrDefault(parking.get("amenityId"), new ArrayList<>()));
-            response.add(item);
-        }
-        return response;      // read-only, so no @Transactional
-    }
-}
-
