@@ -1,41 +1,84 @@
-package hlt.promo.engine.rules;
+getLocationParkingDetails: async (_: any, { request }: any, ctx: any) => {
+  ctx.logger.info("Get Location Parking Details", { timezone: request?.timezone }); // never log sessionKey
+  return await getLocationParkingDetails(request, ctx);
+},
 
-import hlt.promo.engine.dto.Cart;
-import hlt.promo.engine.dto.CartItem;
-import hlt.promo.engine.dto.DiscountResult;
+import { getLocationParkingDetailsRules } from "../../schema/customerParkingAmenity/validators/customerParkingAmenityValidator"; // adjust
 
-rule "PROMO_AUTO_109"
-    salience 60
-    no-loop true
-when
-    $result : DiscountResult(
-        promoStackLocked == false,
-        isRuleAlreadyFired("PROMO_AUTO_109") == false
-    )
-    $cart : Cart(
-        cartTotal > 0,
-        currentDateTime != null,
-        currentDateTime >= java.time.LocalDateTime.of(2026, 10, 28, 18, 25, 0),
-        currentDateTime != null,
-        currentDateTime <= java.time.LocalDateTime.of(2026, 11, 5, 22, 25, 0),
-        userType != null,
-        userType == "MEMBER"
-    )
-then
-    double discount = Math.min(5.0, $cart.getCartTotal());
-    $result.addPromoDiscount("PROMO_AUTO_109", "AUTOMATIC PROMOTION", discount);
-    $result.setPromoStackLocked(true);
-    update($result);
-end
+export async function getLocationParkingDetails(request: any, context: any) {
+  return await callCustomerParkingAmenityData(      // same helper style as your other customer services
+    "POST",
+    "/details",                                     // base /api/v1/customer/parking-amenities
+    request,
+    context,
+    getLocationParkingDetailsRules
+  );
+}
 
 
+import { FieldRule } from "../../utils/commonValidator"; // adjust path
 
-Part	Meaning
-salience	Derived from Priority through convertPriority. Higher salience fires first. Priority 3 produced salience 60 in the example. [CONFIRM] the full mapping.
-no-loop true	The rule cannot re-trigger itself when it calls update.
-promoStackLocked == false	A non-stackable rule that already fired locks later promotions out.
-isRuleAlreadyFired(name)	Prevents the same rule from applying twice.
-Date window	Start and end are converted to UTC and written as literals. The cart's currentDateTime is compared with them.
-userType	Added only for Members ("MEMBER") or Non-Members. No condition for All Users.
-then block	Flat: Math.min(amount, cartTotal). Percentage: cartTotal * pct / 100. Full cart or amenity scope changes which total is used.
-setPromoStackLocked(true)	Present for non-stackable promotions.
+export const getLocationParkingDetailsRules: Record<string, FieldRule> = {
+  sessionKey: { type: "string", required: true },
+  timezone:   { type: "string", required: true },
+};
+
+
+input GetLocationParkingDetails {
+  sessionKey: String!
+  timezone: String!
+}
+
+type Query {
+  getLocationParkingDetails(request: GetLocationParkingDetails!): SessionResponse
+}
+
+
+
+@Slf4j
+@Service
+@RequiredArgsConstructor
+public class CustomerParkingAmenityService implements ICustomerParkingAmenityService {
+
+    private final CustomerParkingAmenityDao customerParkingAmenityDao;
+
+    @Override
+    public List<Map<String, Object>> getLocationParkingDetails(TicketRequest req) {
+        String tz = req.getTimezone();
+        TimezoneConverter.validateTimezone(tz);
+
+        List<List<Map<String, Object>>> resultSets = customerParkingAmenityDao.getLocationParkingDetails(req);
+        List<Map<String, Object>> parkingRows  = resultSets.get(0);
+        List<Map<String, Object>> scheduleRows = resultSets.get(1);
+        List<Map<String, Object>> priceRows    = resultSets.get(2);
+
+        // schedules: group by amenityId, UTC -> local
+        Map<Object, List<Map<String, Object>>> schedulesByAmenity = new HashMap<>();
+        for (Map<String, Object> row : scheduleRows) {
+            if (row.get("amenityScheduleId") == null) continue;          // amenity without schedule
+            Map<String, Object> schedule = ScheduleTimezoneUtil.scheduleToLocal(row, tz);
+            if (row.get("allScheduleDates") != null) {
+                schedule.put("allScheduleDates", ScheduleTimezoneUtil.datesToLocal(row.get("allScheduleDates"), tz));
+            }
+            schedulesByAmenity.computeIfAbsent(row.get("amenityId"), k -> new ArrayList<>()).add(schedule);
+        }
+
+        // price types: group by amenityId (no dates, no conversion)
+        Map<Object, List<Map<String, Object>>> pricesByAmenity = new HashMap<>();
+        for (Map<String, Object> row : priceRows) {
+            if (row.get("amenityPriceTypeId") == null) continue;         // amenity without price type
+            pricesByAmenity.computeIfAbsent(row.get("amenityId"), k -> new ArrayList<>()).add(row);
+        }
+
+        // one object per parking amenity
+        List<Map<String, Object>> response = new ArrayList<>();
+        for (Map<String, Object> parking : parkingRows) {
+            Map<String, Object> item = new LinkedHashMap<>(parking);
+            item.put("schedules",  schedulesByAmenity.getOrDefault(parking.get("amenityId"), new ArrayList<>()));
+            item.put("priceTypes", pricesByAmenity.getOrDefault(parking.get("amenityId"), new ArrayList<>()));
+            response.add(item);
+        }
+        return response;      // read-only, so no @Transactional
+    }
+}
+
