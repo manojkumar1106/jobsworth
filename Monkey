@@ -1,19 +1,41 @@
-Approved term	Definition	Avoid saying
-Offer	Umbrella word for anything that lowers a price (a Promotion or a Discount).	"Deal", "coupon", "special"
-Discount	An always-on price reduction on one product (amenity). No code. Example: $50 → $25 on weekdays.	"System discount" in customer-facing text
-Promotion	A campaign-based offer with dates, limits and rules. Created on the Create Promotion screen. Comes as Promo Code or Automatic.	"Promo" alone when the type matters
-Promo Code promotion	Customer must enter a code at checkout.	"Coupon code"
-Automatic promotion	Applies by itself when the cart qualifies. No code.	"Auto discount", "no-code promo"
-Promo code	The text the customer enters. Unique, letters/numbers only.	"Coupon", "voucher"
-Display message	The text the customer sees describing the offer.	"Description", "title"
-Applies to Full Cart	Toggle. ON = whole order is discounted. OFF = only the selected amenity.	"Cart level / product level" (use "Full cart" and "Amenity")
-Amenity	The product or attraction the offer targets when Full Cart is OFF.	"Item", "SKU"
-Priority	1 (highest) to 5 (lowest). Decides which offer is evaluated first and wins when offers compete.	"Rank", "weight"
-Stackable	Whether the offer may combine with other offers.	"Combinable"
-Stack group	A label that puts offers in competition. Within one group only one applies.	"Bucket", "category"
-User type	Who qualifies: All Users, Members, Non-Members.	"Customer type"
-Channel	Where the offer works: Web, POS or both.	"Platform", "source"
-Draft	Saved, not live.	"Saved"
-Published	Live. The rule is active in the engine.	"Active" (reserve "active" for the rule record)
-Inactive	Turned off. The rule is deactivated.	"Deleted", "removed"
-Rule (Drools rule)	The generated engine record that applies a published offer. Versioned.	"Script"
+package hlt.promo.engine.rules;
+
+import hlt.promo.engine.dto.Cart;
+import hlt.promo.engine.dto.CartItem;
+import hlt.promo.engine.dto.DiscountResult;
+
+rule "PROMO_AUTO_109"
+    salience 60
+    no-loop true
+when
+    $result : DiscountResult(
+        promoStackLocked == false,
+        isRuleAlreadyFired("PROMO_AUTO_109") == false
+    )
+    $cart : Cart(
+        cartTotal > 0,
+        currentDateTime != null,
+        currentDateTime >= java.time.LocalDateTime.of(2026, 10, 28, 18, 25, 0),
+        currentDateTime != null,
+        currentDateTime <= java.time.LocalDateTime.of(2026, 11, 5, 22, 25, 0),
+        userType != null,
+        userType == "MEMBER"
+    )
+then
+    double discount = Math.min(5.0, $cart.getCartTotal());
+    $result.addPromoDiscount("PROMO_AUTO_109", "AUTOMATIC PROMOTION", discount);
+    $result.setPromoStackLocked(true);
+    update($result);
+end
+
+
+
+Part	Meaning
+salience	Derived from Priority through convertPriority. Higher salience fires first. Priority 3 produced salience 60 in the example. [CONFIRM] the full mapping.
+no-loop true	The rule cannot re-trigger itself when it calls update.
+promoStackLocked == false	A non-stackable rule that already fired locks later promotions out.
+isRuleAlreadyFired(name)	Prevents the same rule from applying twice.
+Date window	Start and end are converted to UTC and written as literals. The cart's currentDateTime is compared with them.
+userType	Added only for Members ("MEMBER") or Non-Members. No condition for All Users.
+then block	Flat: Math.min(amount, cartTotal). Percentage: cartTotal * pct / 100. Full cart or amenity scope changes which total is used.
+setPromoStackLocked(true)	Present for non-stackable promotions.
